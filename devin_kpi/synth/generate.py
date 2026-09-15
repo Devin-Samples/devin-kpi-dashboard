@@ -12,10 +12,13 @@ from __future__ import annotations
 import json
 import math
 import random
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from devin_kpi.store import Store
+from devin_kpi.timeutil import pacific_day_start
 
 N_SESSIONS = 4000
 N_USERS = 40
@@ -153,7 +156,12 @@ def generate(
                 "subcategory": subcat,
                 "playbook_id": playbook_id,
                 "automation_id": automation_id,
-                "devin_mode": rng.choice(["interactive", "batch"]),
+                "devin_mode": rng.choice(["normal", "lite"]),
+                "is_archived": 0,
+                "parent_session_id": None,
+                "service_user_id": None,
+                "status_detail": status,
+                "url": f"https://app.devin.ai/sessions/{sid}",
                 "repo_names_json": json.dumps([repo]),
                 "raw_json": None,
             }
@@ -220,7 +228,16 @@ def generate(
                     "confidence": round(rng.uniform(0.5, 0.99), 2),
                     "languages": rng.sample(["python", "typescript", "go"], k=1),
                 },
-                "issues": [{"type": rng.choice(ISSUE_TYPES)} for _ in range(rng.randint(1, 2))],
+                "issues": [
+                    {
+                        "id": f"iss_{rng.randint(1000, 9999)}",
+                        "impact": rng.choice(["low", "medium", "high"]),
+                        "issue": "synthetic issue",
+                        "label": rng.choice(ISSUE_TYPES),
+                        "title": rng.choice(ISSUE_TYPES).replace("_", " "),
+                    }
+                    for _ in range(rng.randint(1, 2))
+                ],
                 "action_items": [],
             }
         insights_rows.append(
@@ -298,6 +315,8 @@ def generate(
         )
     store.upsert_many("consumption_daily", cons_rows)
 
+    _generate_snapshots(store, sessions_rows, prs_rows, rng, start, now)
+
     # billing cycles: monthly over the range
     cyc_start = (start - timedelta(days=start.day - 1)).date().replace(day=1)
     cyc_rows = []
@@ -327,9 +346,17 @@ def generate(
             json.dumps(
                 {
                     "scans_count": 320,
-                    "prs_from_scans_count": 96,
+                    "repos_scanned_count": 12,
+                    "prs_created_count": 96,
+                    "prs_open_count": 22,
+                    "prs_merged_count": 61,
+                    "prs_closed_count": 13,
                     "avg_pr_time_to_merge_seconds": 152000,
-                    "open_findings": {"critical": 3, "high": 14, "medium": 51, "low": 120},
+                    "avg_pr_open_duration_seconds": 71000,
+                    "open_critical_findings_count": 3,
+                    "open_high_findings_count": 14,
+                    "open_medium_findings_count": 51,
+                    "open_low_findings_count": 120,
                 }
             ),
         ),
@@ -340,15 +367,22 @@ def generate(
     for j in range(60):
         ts = int(start.timestamp()) + rng.randint(0, n_days * 86400)
         etype = rng.choice(
-            ["user_added", "repo_connected", "org_created", "role_changed", "api_key_created"]
+            ["add_member", "connect_repo", "create_org", "assign_roles", "create_api_key", "login"]
         )
         audit_rows.append(
             {
-                "event_id": f"evt_synth_{j:04d}",
+                "event_id": f"al_synth_{j:04d}",
                 "occurred_at": ts,
                 "event_type": etype,
                 "actor": rng.choice(users),
-                "raw_json": json.dumps({"event_id": f"evt_synth_{j:04d}", "type": etype}),
+                "raw_json": json.dumps(
+                    {
+                        "audit_log_id": f"al_synth_{j:04d}",
+                        "action": etype,
+                        "created_at": ts,
+                        "user_id": rng.choice(users),
+                    }
+                ),
             }
         )
     store.upsert_many("audit_logs", audit_rows)
@@ -366,9 +400,216 @@ def generate(
 
 
 def _pacific_date_str(epoch: int) -> str:
-    from zoneinfo import ZoneInfo
-
     return datetime.fromtimestamp(epoch, tz=ZoneInfo("America/Los_Angeles")).date().isoformat()
+
+
+def _generate_snapshots(store, sessions_rows, prs_rows, rng, start, now) -> None:
+    """Write metrics_snapshots payloads matching the real API response
+    shapes: per-day windows for the count metrics, and whole-range
+    snapshots for dau/wau/mau/active-users."""
+    zone = ZoneInfo("America/Los_Angeles")
+    size_l = {k: k for k in ("XS", "S", "M", "L", "XL")}
+    pr_by_sid = defaultdict(list)
+    for pr in prs_rows:
+        pr_by_sid[pr["session_id"]].append(pr)
+
+    # per-day aggregates keyed by Pacific-day start epoch
+    day_stats: dict[int, dict] = {}
+    for s in sessions_rows:
+        d = datetime.fromtimestamp(s["created_at"], tz=zone).date()
+        ws = pacific_day_start(d)
+        st = day_stats.setdefault(
+            ws,
+            {
+                "n": 0,
+                "acus": 0.0,
+                "playbook": 0,
+                "merged_sessions": 0,
+                "users": set(),
+                "sizes": defaultdict(int),
+                "origins": defaultdict(int),
+                "merged_by_size": defaultdict(int),
+                "prs": 0,
+                "prs_merged": 0,
+                "prs_closed": 0,
+                "cats": defaultdict(lambda: [0, 0.0, defaultdict(lambda: [0, 0.0])]),
+            },
+        )
+        st["n"] += 1
+        st["acus"] += s["acus_consumed"] or 0
+        st["playbook"] += 1 if s["playbook_id"] else 0
+        st["users"].add(s["user_id"])
+        st["origins"][s["origin"]] += 1
+        c = st["cats"][s["category"]]
+        c[0] += 1
+        c[1] += s["acus_consumed"] or 0
+        sc = c[2][s["subcategory"]]
+        sc[0] += 1
+        sc[1] += s["acus_consumed"] or 0
+        prs = pr_by_sid.get(s["session_id"], [])
+        st["prs"] += len(prs)
+        st["prs_merged"] += sum(1 for p in prs if p["pr_state"] == "merged")
+        st["prs_closed"] += sum(1 for p in prs if p["pr_state"] == "closed")
+        if any(p["pr_state"] == "merged" for p in prs):
+            st["merged_sessions"] += 1
+
+    size_by_sid = {}  # filled below from insights is unavailable; infer via ACU
+    for s in sessions_rows:
+        size_by_sid[s["session_id"]] = _size_for_acus(s["acus_consumed"])
+    for s in sessions_rows:
+        d = datetime.fromtimestamp(s["created_at"], tz=zone).date()
+        st = day_stats[pacific_day_start(d)]
+        st["sizes"][size_by_sid[s["session_id"]]] += 1
+        if any(p["pr_state"] == "merged" for p in pr_by_sid.get(s["session_id"], [])):
+            st["merged_by_size"][size_by_sid[s["session_id"]]] += 1
+
+    now_ts = int(now.timestamp())
+    origins_all = [
+        "api",
+        "automation",
+        "code_scan",
+        "desktop",
+        "jira",
+        "linear",
+        "slack",
+        "teams",
+        "webapp",
+    ]
+    for ws, st in sorted(day_stats.items()):
+        we = ws + 86400
+        base = {
+            "endpoint": None,
+            "scope": "enterprise",
+            "params_json": json.dumps({"time_after": ws, "time_before": we}),
+            "window_start": ws,
+            "window_end": we,
+            "fetched_at": now_ts,
+        }
+
+        def snap(endpoint, payload, base=base):
+            store.insert_snapshot(
+                {**base, "endpoint": endpoint, "payload_json": json.dumps(payload)}
+            )
+
+        snap(
+            "metrics_usage",
+            {
+                "sessions_count": st["n"],
+                "searches_count": int(st["n"] * 0.3),
+                "prs_created_count": st["prs"],
+                "prs_merged_count": st["prs_merged"],
+            },
+        )
+        snap(
+            "metrics_sessions",
+            {
+                "sessions_created_count": st["n"],
+                "sessions_created_by_size": {k.lower(): st["sizes"].get(k, 0) for k in size_l},
+                "sessions_created_by_origin": {o: st["origins"].get(o, 0) for o in origins_all},
+                "sessions_created_with_playbook_count": st["playbook"],
+                "sessions_created_with_search_count": int(st["n"] * 0.1),
+                "sessions_with_merged_prs_count": st["merged_sessions"],
+                "sessions_with_merged_prs_by_size": {
+                    k.lower(): st["merged_by_size"].get(k, 0) for k in size_l
+                },
+                "avg_acus_per_session": round(st["acus"] / st["n"], 4),
+            },
+        )
+        taken = int(st["prs"] * 0.08)
+        snap(
+            "metrics_prs",
+            {
+                "prs_created_count": st["prs"],
+                "prs_opened_count": st["prs"] - st["prs_merged"] - st["prs_closed"],
+                "prs_merged_count": st["prs_merged"],
+                "prs_closed_count": st["prs_closed"],
+                "prs_taken_over_count": taken,
+                "prs_taken_over_opened_count": int(taken * 0.3),
+                "prs_taken_over_merged_count": int(taken * 0.5),
+                "prs_taken_over_closed_count": taken - int(taken * 0.3) - int(taken * 0.5),
+            },
+        )
+        snap(
+            "metrics_by_category",
+            {
+                "categories": [
+                    {
+                        "category": cat,
+                        "sessions_count": c[0],
+                        "acus": round(c[1], 4),
+                        "subcategories": [
+                            {
+                                "subcategory_id": sid,
+                                "display_name": sid.replace("_", " "),
+                                "sessions_count": sc[0],
+                                "acus": round(sc[1], 4),
+                            }
+                            for sid, sc in c[2].items()
+                        ],
+                    }
+                    for cat, c in st["cats"].items()
+                ]
+            },
+        )
+
+    # dau/wau/mau whole-range arrays
+    start_ts, end_ts = int(start.timestamp()), now_ts
+    dau = [
+        {"start_time": ws, "end_time": ws + 86400, "active_users": len(st["users"])}
+        for ws, st in sorted(day_stats.items())
+    ]
+    wau = []
+    wk = sorted(day_stats)
+    for i in range(0, len(wk), 7):
+        chunk = wk[i : i + 7]
+        users: set = set()
+        for ws in chunk:
+            users |= day_stats[ws]["users"]
+        wau.append(
+            {"start_time": chunk[0], "end_time": chunk[-1] + 86400, "active_users": len(users)}
+        )
+    mau = []
+    by_month: dict[tuple, set] = {}
+    for ws, st in day_stats.items():
+        d = datetime.fromtimestamp(ws, tz=zone).date()
+        by_month.setdefault((d.year, d.month), set()).update(st["users"])
+    for (y, m), us in sorted(by_month.items()):
+        ms = pacific_day_start(datetime(y, m, 1, tzinfo=zone).date())
+        nxt = datetime(y + (m == 12), (m % 12) + 1, 1, tzinfo=zone).date()
+        mau.append({"start_time": ms, "end_time": pacific_day_start(nxt), "active_users": len(us)})
+
+    base = {
+        "scope": "enterprise",
+        "window_start": start_ts,
+        "window_end": end_ts,
+        "fetched_at": now_ts,
+        "params_json": json.dumps({"time_after": start_ts, "time_before": end_ts}),
+    }
+    for endpoint, series in (("metrics_dau", dau), ("metrics_wau", wau), ("metrics_mau", mau)):
+        store.insert_snapshot({**base, "endpoint": endpoint, "payload_json": json.dumps(series)})
+    all_users = {s["user_id"] for s in sessions_rows}
+    store.insert_snapshot(
+        {
+            **base,
+            "endpoint": "metrics_active_users",
+            "payload_json": json.dumps(
+                {"start_time": start_ts, "end_time": end_ts, "active_users": len(all_users)}
+            ),
+        }
+    )
+
+
+def _size_for_acus(acus: float | None) -> str:
+    a = acus or 0
+    if a < 1.0:
+        return "XS"
+    if a < 3.0:
+        return "S"
+    if a < 7.0:
+        return "M"
+    if a < 17.0:
+        return "L"
+    return "XL"
 
 
 def ensure_demo_db(settings) -> Store:

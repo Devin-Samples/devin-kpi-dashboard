@@ -84,6 +84,7 @@ def compute_all(
     consumption: pd.DataFrame,
     f: FilterSet,
     settings: Settings,
+    reported: dict | None = None,
 ) -> list[KpiValue]:
     s, p = apply_filters(sessions, prs, f)
     ins = insights[insights.session_id.isin(s.session_id)] if not insights.empty else insights
@@ -134,13 +135,28 @@ def compute_all(
             note=None if n_sessions else "no sessions in period",
         )
     )
-    out.append(
-        _unavailable(
-            "human_takeover_rate",
-            "ratio",
-            "computed from metrics/prs API snapshot (see metrics_reported)",
+    prs_rep = (reported or {}).get("metrics_prs", {}).get("totals", {})
+    taken_over = prs_rep.get("prs_taken_over_count")
+    rep_created = prs_rep.get("prs_created_count")
+    if taken_over is not None and rep_created:
+        out.append(
+            _kv(
+                "human_takeover_rate",
+                taken_over / rep_created,
+                "ratio",
+                num=taken_over,
+                den=rep_created,
+                note="API-reported (metrics/prs); ignores non-date filters",
+            )
         )
-    )
+    else:
+        out.append(
+            _unavailable(
+                "human_takeover_rate",
+                "ratio",
+                "requires a metrics/prs API snapshot covering this range",
+            )
+        )
 
     # ---- Cycle time
     duration = (s.updated_at - s.created_at) / 3600.0
@@ -392,9 +408,19 @@ def current_and_previous(
     consumption: pd.DataFrame,
     f: FilterSet,
     settings: Settings,
+    reported: dict | None = None,
 ) -> pd.DataFrame:
-    cur = compute_all(sessions, prs, insights, issues, consumption, f, settings)
-    prev = compute_all(sessions, prs, insights, issues, consumption, previous_period(f), settings)
+    cur = compute_all(sessions, prs, insights, issues, consumption, f, settings, reported=reported)
+    prev = compute_all(
+        sessions,
+        prs,
+        insights,
+        issues,
+        consumption,
+        previous_period(f),
+        settings,
+        reported=reported,
+    )
     return kpi_table(cur, prev)
 
 
@@ -407,6 +433,9 @@ def analysis_issue_counts(insights: pd.DataFrame) -> pd.Series:
         except (TypeError, json.JSONDecodeError):
             continue
         for issue in (analysis or {}).get("issues") or []:
-            t = issue.get("type") if isinstance(issue, dict) else str(issue)
+            if isinstance(issue, dict):
+                t = issue.get("label") or issue.get("title") or issue.get("type") or "unknown"
+            else:
+                t = str(issue)
             counts[t] = counts.get(t, 0) + 1
     return pd.Series(counts).sort_values(ascending=False)

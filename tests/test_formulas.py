@@ -171,6 +171,20 @@ def test_throughput():
     assert r["human_takeover_rate"].available is False
 
 
+def test_takeover_rate_from_reported():
+    reported = {
+        "metrics_prs": {"totals": {"prs_created_count": 100.0, "prs_taken_over_count": 12.0}}
+    }
+    settings = Settings(DEVIN_API_KEY="k", ACU_UNIT_PRICE=2.0, SEAT_COUNT=10)
+    out = compute_all(
+        SESSIONS, PRS, INSIGHTS, ISSUES, pd.DataFrame(), F, settings, reported=reported
+    )
+    r = {k.key: k for k in out}
+    assert r["human_takeover_rate"].available is True
+    assert r["human_takeover_rate"].value == pytest.approx(0.12)
+    assert "API-reported" in r["human_takeover_rate"].note
+
+
 def test_cycle_time():
     r = results()
     # terminal durations: 2h, 1h, 2h -> median 2h

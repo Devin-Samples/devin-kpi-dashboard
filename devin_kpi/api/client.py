@@ -92,7 +92,7 @@ class DevinClient:
 
     def detect_scope(self, now_epoch: int) -> Scope:
         """Probe enterprise metrics; fall back to organization scope."""
-        params = {"start_time": now_epoch - 86400, "end_time": now_epoch}
+        params = {"time_after": now_epoch - 86400, "time_before": now_epoch}
         try:
             self.get("/v3/enterprise/metrics/usage", params)
             return "enterprise"
@@ -137,7 +137,10 @@ _ENDPOINTS: dict[str, tuple[str, str | None]] = {
         "/v3/organizations/{org_id}/consumption/daily",
     ),
     "consumption_cycles": ("/v3/enterprise/consumption/cycles", None),
-    "code_scan_metrics": ("/v3/enterprise/code-scans/metrics", None),
+    "code_scan_metrics": (
+        "/v3/enterprise/code-scans/metrics",
+        "/v3/organizations/{org_id}/code-scans/metrics",
+    ),
     "audit_logs": ("/v3/enterprise/audit-logs", None),
 }
 

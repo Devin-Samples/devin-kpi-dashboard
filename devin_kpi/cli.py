@@ -43,6 +43,9 @@ def _open_store(settings: Settings) -> Store:
 def collect(
     since: str = typer.Option("90d", help="Start (YYYY-MM-DD or Nd/Nh)"),
     until: str = typer.Option("now", help="End (YYYY-MM-DD or Nd/Nh)"),
+    refresh_days: int = typer.Option(
+        7, "--refresh-days", help="Re-pull windows ending within this many days"
+    ),
 ) -> None:
     """Pull Devin API data into the local SQLite store."""
     settings = _settings()
@@ -54,7 +57,7 @@ def collect(
     end = datetime.now(tz=UTC) if until == "now" else _parse_dt(until)
     from devin_kpi.collector.run import collect as run_collect
 
-    run_collect(settings, start, end, store)
+    run_collect(settings, start, end, store, refresh_days=refresh_days)
     typer.echo(f"Collected into {store.path}: {store.count('sessions')} sessions.")
 
 

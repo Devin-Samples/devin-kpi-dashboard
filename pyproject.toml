@@ -32,3 +32,6 @@ target-version = "py312"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["C408"]
+# Streamlit multipage apps use CamelCase/N_PageName file names by convention.
+"devin_kpi/app/Home.py" = ["N999"]
+"devin_kpi/app/pages/*" = ["N999"]

@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     playbook_id TEXT,
     automation_id TEXT,
     devin_mode TEXT,
+    is_archived INTEGER,
+    parent_session_id TEXT,
+    service_user_id TEXT,
+    status_detail TEXT,
+    url TEXT,
     repo_names_json TEXT,
     raw_json TEXT
 );
@@ -120,7 +125,16 @@ class Store:
 
     def init_schema(self) -> None:
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the initial schema to existing DBs."""
+        for col in ("is_archived", "parent_session_id", "service_user_id", "status_detail", "url"):
+            try:
+                self._conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     def close(self) -> None:
         self._conn.close()
@@ -160,6 +174,12 @@ class Store:
         cols = list(row)
         sql = f"INSERT INTO metrics_snapshots ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})"
         self._conn.execute(sql, [row[c] for c in cols])
+
+    def delete_snapshots(self, endpoint: str, window_start: int, window_end: int) -> None:
+        self._conn.execute(
+            "DELETE FROM metrics_snapshots WHERE endpoint=? AND window_start=? AND window_end=?",
+            (endpoint, window_start, window_end),
+        )
 
     def snapshot_exists(self, endpoint: str, window_start: int, window_end: int) -> bool:
         cur = self._conn.execute(

@@ -1,10 +1,13 @@
 """Collector: idempotent, resumable pull of all Devin API endpoints into
 the local SQLite store.
 
-Sessions are collected in daily windows (collector_runs tracks
-window+endpoint -> status='done' for resume). Metrics snapshots are stored
-per window; consumption/daily uses Pacific-day boundaries; cycles,
-code-scan metrics and audit logs cover the whole range.
+Sessions/insights and the count metrics are collected in daily windows
+(collector_runs tracks window+endpoint -> status='done' for resume). The
+dau/wau/mau endpoints return a whole-range array, so they are fetched once
+per range; metrics/active-users likewise. consumption/daily is requested
+with time_after/time_before snapped to Pacific-day boundaries. cycles is
+paginated. Windows ending within `refresh_days` are re-pulled even if
+marked done, so late-arriving status/ACU updates are picked up.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -20,16 +24,24 @@ from devin_kpi.api.client import DevinClient, Endpoints, Scope
 from devin_kpi.config import Settings
 from devin_kpi.enrichment.pr_urls import parse_pr_url
 from devin_kpi.store import Store
-from devin_kpi.timeutil import day_windows, utc_now_epoch
+from devin_kpi.timeutil import day_windows, pacific_day_start, utc_now_epoch
 
 log = logging.getLogger(__name__)
 
+# Per-day windowed metrics.
 DAILY_METRIC_ENDPOINTS = [
     "metrics_usage",
     "metrics_sessions",
     "metrics_prs",
     "metrics_by_category",
+]
+
+# Whole-range endpoints returning arrays of {start_time,end_time,active_users}
+# (dau/wau/mau) or a single object (active-users).
+RANGE_ACTIVE_ENDPOINTS = [
     "metrics_dau",
+    "metrics_wau",
+    "metrics_mau",
     "metrics_active_users",
 ]
 
@@ -40,6 +52,7 @@ def collect(
     until: datetime,
     store: Store,
     client: DevinClient | None = None,
+    refresh_days: int = 7,
 ) -> None:
     now = utc_now_epoch()
     own_client = client is None
@@ -55,18 +68,26 @@ def collect(
         ep = Endpoints(scope, client.org_id)
         tz = settings.CONSUMPTION_DAY_TZ
 
+        def done(start: int, end: int, name: str) -> bool:
+            """Window done and old enough to skip. Windows ending within
+            refresh_days are re-pulled to pick up late updates."""
+            if end >= now - refresh_days * 86400:
+                return False
+            return store.run_done(start, end, name)
+
         for start, end in day_windows(since, until, tz):
-            _collect_sessions_window(client, store, ep, start, end, settings)
+            _collect_sessions_window(client, store, ep, start, end, settings, done)
             for name in DAILY_METRIC_ENDPOINTS:
-                _collect_metric_window(client, store, ep, name, scope, start, end)
+                _collect_metric_window(client, store, ep, name, scope, start, end, done)
 
-        # Weekly / monthly active windows.
-        _collect_periodic_actives(client, store, ep, scope, since, until, tz)
+        since_ts, until_ts = int(since.timestamp()), int(until.timestamp())
+        for name in RANGE_ACTIVE_ENDPOINTS:
+            _collect_metric_window(client, store, ep, name, scope, since_ts, until_ts, done)
 
-        _collect_consumption(client, store, ep, scope, since, until, tz)
-        _collect_cycles(client, store, ep)
-        _collect_code_scans(client, store, ep, since, until)
-        _collect_audit_logs(client, store, ep, since, until)
+        _collect_consumption(client, store, ep, scope, since, until, tz, done)
+        _collect_cycles(client, store, ep)  # re-pulled every run
+        _collect_code_scans(client, store, ep, since, until)  # re-pulled every run
+        _collect_audit_logs(client, store, ep, since, until, done)
 
         store.set_meta("last_collect_at", str(utc_now_epoch()))
         store.commit()
@@ -85,11 +106,12 @@ def _collect_sessions_window(
     start: int,
     end: int,
     settings: Settings,
+    done,
 ) -> None:
     issue_re = re.compile(settings.ISSUE_KEY_REGEX)
 
     for name, path in (("sessions", ep.path("sessions")), ("insights", ep.path("insights"))):
-        if path is None or store.run_done(start, end, name):
+        if path is None or done(start, end, name):
             continue
         params = {"created_after": start, "created_before": end}
         for item in client.paginate(path, params):
@@ -124,6 +146,11 @@ def _store_session(store: Store, s: dict, issue_re: re.Pattern[str]) -> None:
             "playbook_id": s.get("playbook_id"),
             "automation_id": s.get("automation_id"),
             "devin_mode": s.get("devin_mode"),
+            "is_archived": s.get("is_archived"),
+            "parent_session_id": s.get("parent_session_id"),
+            "service_user_id": s.get("service_user_id"),
+            "status_detail": s.get("status_detail"),
+            "url": s.get("url"),
             "repo_names_json": json.dumps(repo_names),
             "raw_json": json.dumps(s),
         },
@@ -192,14 +219,15 @@ def _collect_metric_window(
     scope: Scope,
     start: int,
     end: int,
+    done,
 ) -> None:
-    if store.run_done(start, end, name):
+    if done(start, end, name):
         return
     path = ep.path(name)
     if path is None:
         store.mark_run(start, end, name, "skipped", utc_now_epoch())
         return
-    params = {"start_time": start, "end_time": end}
+    params = {"time_after": start, "time_before": end}
     try:
         payload = client.get(path, params)
     except httpx.HTTPStatusError as exc:
@@ -208,6 +236,8 @@ def _collect_metric_window(
             store.mark_run(start, end, name, "skipped", utc_now_epoch())
             return
         raise
+    # replace prior snapshot for this window (refresh re-pulls are common)
+    store.delete_snapshots(name, start, end)
     store.insert_snapshot(
         {
             "endpoint": name,
@@ -223,61 +253,6 @@ def _collect_metric_window(
     store.commit()
 
 
-def _collect_periodic_actives(
-    client: DevinClient,
-    store: Store,
-    ep: Endpoints,
-    scope: Scope,
-    since: datetime,
-    until: datetime,
-    tz: str,
-) -> None:
-    """WAU per ISO week and MAU per calendar month."""
-    for name, spans in (
-        ("metrics_wau", _iso_week_spans(since, until, tz)),
-        ("metrics_mau", _month_spans(since, until, tz)),
-    ):
-        if ep.path(name) is None:
-            continue
-        for start, end in spans:
-            _collect_metric_window(client, store, ep, name, scope, start, end)
-
-
-def _iso_week_spans(since: datetime, until: datetime, tz: str) -> list[tuple[int, int]]:
-    from zoneinfo import ZoneInfo
-
-    zone = ZoneInfo(tz)
-    d = since.astimezone(zone).date()
-    d -= timedelta(days=d.weekday())  # Monday
-    end_d = until.astimezone(zone).date()
-    spans = []
-    while d <= end_d:
-        from devin_kpi.timeutil import pacific_day_start
-
-        spans.append((pacific_day_start(d, tz), pacific_day_start(d + timedelta(days=7), tz)))
-        d += timedelta(days=7)
-    return spans
-
-
-def _month_spans(since: datetime, until: datetime, tz: str) -> list[tuple[int, int]]:
-    from zoneinfo import ZoneInfo
-
-    from devin_kpi.timeutil import pacific_day_start
-
-    zone = ZoneInfo(tz)
-    d = since.astimezone(zone).date().replace(day=1)
-    end_d = until.astimezone(zone).date()
-    spans = []
-    while d <= end_d:
-        if d.month == 12:
-            nxt = d.replace(year=d.year + 1, month=1)
-        else:
-            nxt = d.replace(month=d.month + 1)
-        spans.append((pacific_day_start(d, tz), pacific_day_start(nxt, tz)))
-        d = nxt
-    return spans
-
-
 # ------------------------------------------------------------- consumption
 
 
@@ -289,22 +264,23 @@ def _collect_consumption(
     since: datetime,
     until: datetime,
     tz: str,
+    done,
 ) -> None:
     path = ep.path("consumption_daily")
     if path is None:
         return
-    if store.run_done(int(since.timestamp()), int(until.timestamp()), "consumption_daily"):
-        return
-    payload = client.get(
-        path, {"start_time": int(since.timestamp()), "end_time": int(until.timestamp())}
-    )
-    scope_id = client.org_id if scope == "organization" else "enterprise"
-    from zoneinfo import ZoneInfo
-
     zone = ZoneInfo(tz)
+    # Snap request bounds to Pacific-day starts so buckets align with the
+    # web app's daily consumption view.
+    start_ts = pacific_day_start(since.astimezone(zone).date(), tz)
+    end_ts = pacific_day_start(until.astimezone(zone).date() + timedelta(days=1), tz)
+    if done(start_ts, end_ts, "consumption_daily"):
+        return
+    payload = client.get(path, {"time_after": start_ts, "time_before": end_ts})
+    scope_id = client.org_id if scope == "organization" else "enterprise"
     rows = []
     for day in payload.get("consumption_by_date", []):
-        ts = day.get("date") or day.get("start_time")
+        ts = day.get("date")
         if ts is None:
             continue
         date_str = (
@@ -315,7 +291,7 @@ def _collect_consumption(
         by_product = day.get("acus_by_product") or {}
         total = 0.0
         for product in ("devin", "cascade", "terminal", "review"):
-            acus = float(by_product.get(product, 0.0))
+            acus = float(by_product.get(product) or 0.0)
             total += acus
             rows.append(
                 {
@@ -336,91 +312,82 @@ def _collect_consumption(
             }
         )
     store.upsert_many("consumption_daily", rows)
-    store.mark_run(
-        int(since.timestamp()), int(until.timestamp()), "consumption_daily", "done", utc_now_epoch()
-    )
+    store.mark_run(start_ts, end_ts, "consumption_daily", "done", utc_now_epoch())
     store.commit()
 
 
 def _collect_cycles(client: DevinClient, store: Store, ep: Endpoints) -> None:
+    """Billing cycles; paginated, re-pulled every run (idempotent upsert)."""
     path = ep.path("consumption_cycles")
-    if path is None or store.count("billing_cycles") > 0:
+    if path is None:
         return
     try:
-        payload = client.get(path)
+        for item in client.paginate(path):
+            store.upsert(
+                "billing_cycles",
+                {
+                    "cycle_start": item.get("after"),
+                    "cycle_end": item.get("before"),
+                    "raw_json": json.dumps(item),
+                },
+            )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (403, 404):
             return
         raise
-    cycles = payload.get("cycles", payload if isinstance(payload, list) else [])
-    for c in cycles:
-        store.upsert(
-            "billing_cycles",
-            {
-                "cycle_start": c.get("cycle_start") or c.get("start_time"),
-                "cycle_end": c.get("cycle_end") or c.get("end_time"),
-                "raw_json": json.dumps(c),
-            },
-        )
     store.commit()
 
 
 def _collect_code_scans(client: DevinClient, store: Store, ep: Endpoints, since, until) -> None:
+    """Code-scan metrics for the whole range; re-pulled every run."""
     path = ep.path("code_scan_metrics")
     if path is None:
         return
-    if store.count("code_scan_metrics") > 0:
-        return
+    start_ts, end_ts = int(since.timestamp()), int(until.timestamp())
     try:
-        payload = client.get(
-            path, {"start_time": int(since.timestamp()), "end_time": int(until.timestamp())}
-        )
+        payload = client.get(path, {"time_after": start_ts, "time_before": end_ts})
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (403, 404):
             return
         raise
     store.execute(
+        "DELETE FROM code_scan_metrics WHERE window_start=? AND window_end=?",
+        (start_ts, end_ts),
+    )
+    store.execute(
         "INSERT INTO code_scan_metrics (window_start, window_end, fetched_at, payload_json) VALUES (?,?,?,?)",
-        (int(since.timestamp()), int(until.timestamp()), utc_now_epoch(), json.dumps(payload)),
+        (start_ts, end_ts, utc_now_epoch(), json.dumps(payload)),
     )
     store.commit()
 
 
 def _collect_audit_logs(
-    client: DevinClient, store: Store, ep: Endpoints, since: datetime, until: datetime
+    client: DevinClient, store: Store, ep: Endpoints, since: datetime, until: datetime, done
 ) -> None:
     path = ep.path("audit_logs")
     if path is None:
         return
-    if store.run_done(int(since.timestamp()), int(until.timestamp()), "audit_logs"):
+    start_ts, end_ts = int(since.timestamp()), int(until.timestamp())
+    if done(start_ts, end_ts, "audit_logs"):
         return
     try:
-        for item in client.paginate(
-            path, {"start_time": int(since.timestamp()), "end_time": int(until.timestamp())}
-        ):
+        for item in client.paginate(path, {"time_after": start_ts, "time_before": end_ts}):
             store.upsert(
                 "audit_logs",
                 {
-                    "event_id": item.get("event_id") or item.get("id"),
-                    "occurred_at": item.get("occurred_at") or item.get("created_at"),
-                    "event_type": item.get("event_type") or item.get("type"),
-                    "actor": item.get("actor"),
+                    "event_id": item.get("audit_log_id"),
+                    "occurred_at": item.get("created_at"),
+                    "event_type": item.get("action"),
+                    # never store user_email in the actor column
+                    "actor": item.get("user_id") or item.get("service_user_id"),
                     "raw_json": json.dumps(item),
                 },
             )
-        store.mark_run(
-            int(since.timestamp()), int(until.timestamp()), "audit_logs", "done", utc_now_epoch()
-        )
+        store.mark_run(start_ts, end_ts, "audit_logs", "done", utc_now_epoch())
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (403, 404):
             log.info("audit-logs unavailable (%s); skipped", exc.response.status_code)
-            store.mark_run(
-                int(since.timestamp()),
-                int(until.timestamp()),
-                "audit_logs",
-                "skipped",
-                utc_now_epoch(),
-            )
+            store.mark_run(start_ts, end_ts, "audit_logs", "skipped", utc_now_epoch())
         else:
             raise
     store.commit()

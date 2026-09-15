@@ -8,6 +8,7 @@ import streamlit as st
 
 from devin_kpi.config import Settings
 from devin_kpi.store import Store
+from devin_kpi.synth.generate import ensure_demo_db
 
 
 def get_settings() -> Settings:
@@ -17,8 +18,6 @@ def get_settings() -> Settings:
 def db_path() -> str:
     settings = get_settings()
     if settings.demo_mode:
-        from devin_kpi.synth.generate import ensure_demo_db
-
         ensure_demo_db(settings).close()
     return str(settings.resolved_db_path)
 
@@ -29,8 +28,6 @@ def store() -> Store:
 
 @st.cache_data(ttl=300)
 def load_table(table: str) -> pd.DataFrame:
-    import pandas as pd  # noqa: F401
-
     s = store()
     try:
         return s.read_df(table)

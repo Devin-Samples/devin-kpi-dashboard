@@ -99,6 +99,20 @@ def format_value(kv) -> str:
     )
 
 
+def format_delta(kv, prev_value: float | None) -> str | None:
+    """Formatted delta vs a previous-period value, styled by unit."""
+    if prev_value is None or kv.value is None:
+        return None
+    d = kv.value - prev_value
+    if kv.unit == "usd":
+        return f"{'+' if d >= 0 else '-'}${abs(d):,.2f}"
+    if kv.unit == "ratio":
+        return f"{d * 100:+.1f} pp"
+    if kv.unit == "hours":
+        return f"{d:+.1f} h"
+    return f"{d:+,.0f}"
+
+
 def kpi_card(kv, prev_value: float | None = None, col=None) -> None:
     """Render one KPI as a metric card with dependency badges."""
     c = col or st
@@ -108,10 +122,7 @@ def kpi_card(kv, prev_value: float | None = None, col=None) -> None:
             f"not available: {kv.note or ', '.join(DEPENDS_LABELS.get(d, d) for d in kv.depends_on)}"
         )
         return
-    delta = None
-    if prev_value is not None and kv.value is not None:
-        delta = f"{kv.value - prev_value:+.2f} {kv.unit}"
-    c.metric(kv.label, format_value(kv), delta=delta)
+    c.metric(kv.label, format_value(kv), delta=format_delta(kv, prev_value))
     badges = [DEPENDS_LABELS.get(d, d) for d in kv.depends_on]
     if badges:
         c.caption("; ".join(badges))

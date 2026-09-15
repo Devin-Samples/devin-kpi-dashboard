@@ -237,6 +237,18 @@ def test_unavailable_without_price():
     assert r["acus_per_merged_pr"].available is True
 
 
+def test_demo_mode_assumes_two_dollar_acu():
+    settings = Settings()  # no key, no price -> demo mode
+    assert settings.demo_mode
+    assert settings.effective_acu_unit_price == 2.0
+    r = results(settings=settings)
+    # dollar KPIs render with the assumed price: mean 5 acu * $2 = $10
+    assert r["cost_per_session"].value == pytest.approx(10.0)
+    # explicit price still wins
+    assert Settings(DEVIN_API_KEY=None, ACU_UNIT_PRICE=3.0).effective_acu_unit_price == 3.0
+    assert Settings(DEVIN_API_KEY="k").effective_acu_unit_price is None
+
+
 def test_unavailable_without_git_enrichment():
     prs = PRS.assign(enriched_at=None, merged_at=None)
     r = results(prs=prs)

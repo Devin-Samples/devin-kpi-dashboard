@@ -207,8 +207,8 @@ def compute_all(
         )
     )
 
-    if settings.acu_price_set:
-        price = settings.ACU_UNIT_PRICE
+    if settings.effective_acu_unit_price is not None:
+        price = settings.effective_acu_unit_price
         out.append(
             _kv(
                 "cost_per_merged_pr",
@@ -236,11 +236,13 @@ def compute_all(
         acus_linked = float(s[s.session_id.isin(pointed.session_id)].acus_consumed.fillna(0).sum())
         acus_per_pt = acus_linked / pts if pts else None
         out.append(_kv("acus_per_story_point", acus_per_pt, "acu", num=acus_linked, den=pts))
-        if settings.acu_price_set:
+        if settings.effective_acu_unit_price is not None:
             out.append(
                 _kv(
                     "cost_per_story_point",
-                    acus_per_pt * settings.ACU_UNIT_PRICE if acus_per_pt is not None else None,
+                    acus_per_pt * settings.effective_acu_unit_price
+                    if acus_per_pt is not None
+                    else None,
                     "usd",
                     num=acus_linked,
                     den=pts,

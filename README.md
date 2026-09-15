@@ -74,7 +74,7 @@ Endpoints with no org equivalent (cycles, audit-logs) are skipped.
 | `DEVIN_API_KEY` | real mode | — | Devin service-user key / PAT (`cog_…`). Unset → demo mode. |
 | `DEVIN_API_BASE_URL` | no | `https://api.devin.ai` | API base URL |
 | `DEVIN_ORG_ID` | org-scoped keys | — | Organization ID for org-scoped keys |
-| `ACU_UNIT_PRICE` | no | — | USD per ACU; enables dollar KPIs |
+| `ACU_UNIT_PRICE` | no | — | USD per ACU; enables dollar KPIs (demo mode assumes $2.00/ACU) |
 | `GITHUB_TOKEN` | no | — | GitHub PR enrichment (cycle time, review load, diff size) |
 | `GITLAB_TOKEN` | no | — | GitLab MR enrichment |
 | `AZURE_DEVOPS_PAT` | no | — | Azure DevOps PR enrichment |

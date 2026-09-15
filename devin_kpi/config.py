@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     def acu_price_set(self) -> bool:
         return self.ACU_UNIT_PRICE is not None
 
+    @property
+    def effective_acu_unit_price(self) -> float | None:
+        """ACU price used for dollar KPIs. In demo mode with no explicit
+        price configured, assume $2.00/ACU so dollar KPIs render."""
+        if self.ACU_UNIT_PRICE is not None:
+            return self.ACU_UNIT_PRICE
+        if self.demo_mode:
+            return 2.0
+        return None
+
     @cached_property
     def resolved_db_path(self) -> Path:
         raw = self.DEMO_DATABASE_PATH if self.demo_mode else self.DATABASE_PATH

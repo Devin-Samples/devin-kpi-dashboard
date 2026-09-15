@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devin-kpi-dashboard"
+version = "0.1.0"
+description = "Open-source KPI reporting dashboard backend for Devin Enterprise"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+    "pandas",
+    "pydantic-settings",
+    "python-dotenv",
+    "streamlit",
+    "plotly",
+    "typer",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "respx", "ruff"]
+
+[project.scripts]
+devin-kpi = "devin_kpi.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["devin_kpi*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["C408"]

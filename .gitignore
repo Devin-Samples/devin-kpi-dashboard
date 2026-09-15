@@ -10,3 +10,4 @@ kpis.csv
 build/
 dist/
 kpis*.csv
+.ruff_cache/

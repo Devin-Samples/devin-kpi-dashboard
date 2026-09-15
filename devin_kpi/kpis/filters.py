@@ -53,6 +53,19 @@ def apply_filters(
     return s, p
 
 
+def clip_dates(df: pd.DataFrame, col: str, f: FilterSet, unit: str | None = None) -> pd.DataFrame:
+    """Keep rows whose `col` timestamp falls in [f.start, f.end).
+
+    `unit="s"` for integer epoch columns; None (default) parses ISO strings
+    or already-datetime columns.
+    """
+    if df.empty:
+        return df
+    ts = pd.to_datetime(df[col], unit=unit, utc=True)
+    mask = (ts >= pd.Timestamp(f.start)) & (ts < pd.Timestamp(f.end))
+    return df[mask]
+
+
 def previous_period(f: FilterSet) -> FilterSet:
     """Same-length window immediately preceding the current one."""
     span = f.end - f.start

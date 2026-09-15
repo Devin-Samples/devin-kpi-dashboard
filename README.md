@@ -176,9 +176,18 @@ Overview page exports the whole KPI table (current vs previous period) —
 built for pasting into someone else's slide deck. CLI equivalent:
 `python -m devin_kpi export-kpis --start 90d --out kpis.csv`.
 
+## Demo
+
+Short walkthrough of the dashboard in demo mode (synthetic data only):
+
+![Synthetic demo](docs/demo/synthetic-demo.gif)
+
+[MP4 version](docs/demo/synthetic-demo.mp4)
+
 ## Screenshots
 
-All screenshots are taken against the bundled synthetic dataset.
+All screenshots and the demo video are taken against the bundled synthetic
+dataset.
 
 ![Overview](docs/screenshots/overview.png)
 ![Throughput](docs/screenshots/throughput.png)

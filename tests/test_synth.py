@@ -34,7 +34,22 @@ def test_generate(tmp_path):
 
     assert store.get_meta("demo") == "true"
     assert store.count("billing_cycles") > 0
-    assert store.count("audit_logs") == 60
+
+    # service accounts: every code_scan/automation session has one, and
+    # human sessions never do
+    svc = sess[sess.origin.isin(["code_scan", "automation"])]
+    assert svc.service_user_id.notna().all()
+    assert sess[sess.origin.isin(["webapp", "slack", "desktop"])].service_user_id.isna().all()
+    assert 0 < svc.service_user_id.nunique() <= 4
+
+    # audit log: login + create_session per human session, plus extras;
+    # actor column never holds an email
+    audit = store.read_df("audit_logs")
+    n_human = int(sess.service_user_id.isna().sum())
+    assert (audit.event_type == "login").sum() == n_human
+    assert (audit.event_type == "create_session").sum() == n_human
+    assert audit.event_type.nunique() >= 8
+    assert not audit.actor.str.contains("@").any()
 
 
 def pytest_approx(x, tol=1e-6):

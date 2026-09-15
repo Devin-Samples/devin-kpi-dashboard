@@ -27,6 +27,10 @@ N_DAYS = 180
 ORGS = [("org_synth_01", "org_alpha"), ("org_synth_02", "org_beta"), ("org_synth_03", "org_gamma")]
 ORG_WEIGHTS = [0.5, 0.3, 0.2]
 USERS = [f"user_synth_{i:03d}" for i in range(1, N_USERS + 1)]
+# Service accounts (API keys / integrations). Sessions from code_scan and
+# automation origins, and most api-origin sessions, are attributed to one.
+SERVICE_USERS = [f"svc_synth_{i:02d}" for i in range(1, 5)]
+SERVICE_ORIGINS = {"code_scan", "automation"}
 
 SIZES = ["xs", "s", "m", "l", "xl"]
 SIZE_WEIGHTS = [0.30, 0.30, 0.22, 0.12, 0.06]
@@ -91,6 +95,22 @@ STATUS_DETAILS = {
 }
 
 
+AUDIT_ACTIONS = [
+    "search_query",
+    "permission_response",
+    "add_member",
+    "add_enterprise_member",
+    "connect_repo",
+    "assign_roles",
+    "create_api_key",
+    "create_playbook",
+    "update_playbook",
+    "create_automation",
+    "update_automation",
+]
+AUDIT_WEIGHTS = [0.35, 0.25, 0.08, 0.04, 0.05, 0.04, 0.03, 0.06, 0.04, 0.03, 0.03]
+
+
 def _pick(rng: random.Random, items, weights):
     return rng.choices(items, weights=weights, k=1)[0]
 
@@ -132,6 +152,10 @@ def generate(
         cat = _pick(rng, list(CATEGORIES), CAT_WEIGHTS)
         subcat = rng.choice(CATEGORIES[cat])
         origin = _pick(rng, ORIGINS, ORIGIN_WEIGHTS)
+        service_user = None
+        if origin in SERVICE_ORIGINS or (origin == "api" and rng.random() < 0.7):
+            service_user = rng.choice(SERVICE_USERS)
+            user = service_user
         status = _pick(rng, STATUSES, STATUS_WEIGHTS)
         details, detail_weights = STATUS_DETAILS[status]
         status_detail = _pick(rng, details, detail_weights)
@@ -169,7 +193,7 @@ def generate(
                 "devin_mode": rng.choice(["normal", "lite"]),
                 "is_archived": 0,
                 "parent_session_id": None,
-                "service_user_id": None,
+                "service_user_id": service_user,
                 "status_detail": status_detail,
                 "url": f"https://app.devin.ai/sessions/{sid}",
                 "repo_names_json": json.dumps([repo]),
@@ -179,7 +203,7 @@ def generate(
 
         # PRs: ~55% of sessions
         if rng.random() < 0.55:
-            pr_n = rng.randint(100, 9999)
+            pr_n = 100 + i  # unique per session so PR URLs never collide
             url = f"https://github.com/{repo}/pull/{pr_n}"
             r = rng.random()
             state = "merged" if r < 0.60 else ("open" if r < 0.85 else "closed")
@@ -372,30 +396,42 @@ def generate(
         ),
     )
 
-    # audit logs
+    # audit logs: one login + create_session per human session plus a
+    # weighted mix of the other action types seen in real logs.
     audit_rows = []
-    for j in range(60):
+    for s in sessions_rows:
+        if s["service_user_id"]:
+            continue
+        audit_rows.append((s["created_at"] - rng.randint(60, 1800), "login", s["user_id"]))
+        audit_rows.append((s["created_at"], "create_session", s["user_id"]))
+        for _ in range(rng.randint(0, 3)):
+            audit_rows.append(
+                (s["created_at"] + rng.randint(60, 7200), "send_message", s["user_id"])
+            )
+    for _ in range(n_sessions // 4):
         ts = int(start.timestamp()) + rng.randint(0, n_days * 86400)
-        etype = rng.choice(
-            ["add_member", "connect_repo", "create_org", "assign_roles", "create_api_key", "login"]
-        )
-        audit_rows.append(
+        etype = _pick(rng, AUDIT_ACTIONS, AUDIT_WEIGHTS)
+        audit_rows.append((ts, etype, rng.choice(users)))
+    store.upsert_many(
+        "audit_logs",
+        [
             {
-                "event_id": f"al_synth_{j:04d}",
+                "event_id": f"al_synth_{j:06d}",
                 "occurred_at": ts,
                 "event_type": etype,
-                "actor": rng.choice(users),
+                "actor": actor,
                 "raw_json": json.dumps(
                     {
-                        "audit_log_id": f"al_synth_{j:04d}",
+                        "audit_log_id": f"al_synth_{j:06d}",
                         "action": etype,
                         "created_at": ts,
-                        "user_id": rng.choice(users),
+                        "user_id": actor,
                     }
                 ),
             }
-        )
-    store.upsert_many("audit_logs", audit_rows)
+            for j, (ts, etype, actor) in enumerate(sorted(audit_rows))
+        ],
+    )
 
     store.set_meta("demo", "true")
     store.set_meta("scope", "enterprise")
@@ -448,7 +484,8 @@ def _generate_snapshots(store, sessions_rows, prs_rows, rng, start, now) -> None
         st["n"] += 1
         st["acus"] += s["acus_consumed"] or 0
         st["playbook"] += 1 if s["playbook_id"] else 0
-        st["users"].add(s["user_id"])
+        if not s["service_user_id"]:
+            st["users"].add(s["user_id"])
         st["origins"][s["origin"]] += 1
         c = st["cats"][s["category"]]
         c[0] += 1

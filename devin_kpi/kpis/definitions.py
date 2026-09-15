@@ -154,25 +154,33 @@ DEFINITIONS: dict[str, dict] = {
         "source": "sessions list",
         "depends_on": [],
     },
+    "total_cost": {
+        "group": "Cost",
+        "label": "Total spend",
+        "formula": "total_acus * ACU_UNIT_PRICE",
+        "source": "sessions + config",
+        "depends_on": ["ACU_UNIT_PRICE"],
+    },
     # Adoption
     "dau": {
         "group": "Adoption",
         "label": "DAU",
-        "formula": "distinct users with >=1 session on the period's last day",
+        "formula": "distinct human users with >=1 session on the period's last day "
+        "(excludes service users and code_scan/automation origins)",
         "source": "sessions list",
         "depends_on": [],
     },
     "wau": {
         "group": "Adoption",
         "label": "WAU",
-        "formula": "distinct users with >=1 session in the last 7 days of the period",
+        "formula": "distinct human users with >=1 session in the last 7 days of the period",
         "source": "sessions list",
         "depends_on": [],
     },
     "mau": {
         "group": "Adoption",
         "label": "MAU",
-        "formula": "distinct users with >=1 session in the last 30 days of the period",
+        "formula": "distinct human users with >=1 session in the last 30 days of the period",
         "source": "sessions list",
         "depends_on": [],
     },
@@ -186,7 +194,7 @@ DEFINITIONS: dict[str, dict] = {
     "active_vs_licensed": {
         "group": "Adoption",
         "label": "Active users vs licensed",
-        "formula": "distinct active users in period / SEAT_COUNT",
+        "formula": "distinct human users active in period / SEAT_COUNT",
         "source": "sessions + config SEAT_COUNT",
         "depends_on": ["SEAT_COUNT"],
     },
@@ -232,5 +240,20 @@ DEFINITIONS: dict[str, dict] = {
         "formula": "mean(review_rounds) over merged PRs",
         "source": "session_prs (git enrichment)",
         "depends_on": ["git_enrichment"],
+    },
+    "usage_limit_hit_rate": {
+        "group": "Quality & efficiency",
+        "label": "Sessions stopped by usage limit",
+        "formula": "sessions with status_detail in (usage_limit_exceeded, "
+        "org_usage_limit_exceeded, user_usage_limit_exceeded) / sessions created",
+        "source": "sessions list (status_detail)",
+        "depends_on": [],
+    },
+    "session_error_rate": {
+        "group": "Quality & efficiency",
+        "label": "Sessions ended in error",
+        "formula": "sessions with status_detail error / sessions created",
+        "source": "sessions list (status_detail)",
+        "depends_on": [],
     },
 }

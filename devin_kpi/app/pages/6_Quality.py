@@ -4,45 +4,34 @@ import plotly.express as px
 import streamlit as st
 
 from devin_kpi.app import data, ui
-from devin_kpi.kpis.filters import apply_filters
-from devin_kpi.kpis.formulas import analysis_issue_counts, compute_all
-from devin_kpi.kpis.metrics_reported import reported_metrics
+from devin_kpi.kpis.formulas import analysis_issue_counts, status_detail_breakdown
 from devin_kpi.kpis.series import weekly_user_messages
-from devin_kpi.store import Store
 
-st.set_page_config(page_title="Quality", layout="wide")
-st.title("Quality & efficiency")
-data.demo_banner()
-d = data.load_all()
-settings = data.get_settings()
-f, compare = ui.sidebar_filters(d)
-s, p = apply_filters(d["sessions"], d["prs"], f)
-ins = (
-    d["insights"][d["insights"].session_id.isin(s.session_id)]
-    if not d["insights"].empty
-    else d["insights"]
-)
+ctx = data.page_context("Quality & efficiency")
+s, ins, kvs, prev = ctx.sessions, ctx.insights, ctx.kvs, ctx.prev
 
-store = Store(data.db_path())
-reported = reported_metrics(store, f.start, f.end)
-store.close()
-
-kvs = {
-    k.key: k
-    for k in compute_all(s, p, ins, d["issues"], d["consumption"], f, settings, reported=reported)
-}
-cols = st.columns(5)
-for c, k in zip(
-    cols,
+hidden = ui.kpi_row(
+    kvs,
     (
+        "closed_without_merge_rate",
+        "usage_limit_hit_rate",
+        "session_error_rate",
         "large_session_share",
         "user_messages_per_session",
-        "closed_without_merge_rate",
-        "review_comments_per_merged_pr",
-        "review_rounds_per_merged_pr",
     ),
-):
-    ui.kpi_card(kvs[k], col=c)
+    prev,
+)
+hidden += ui.kpi_row(kvs, ("review_comments_per_merged_pr", "review_rounds_per_merged_pr"), prev)
+ui.setup_expander(hidden)
+
+st.subheader("How sessions ended")
+st.caption(
+    "status_detail of every session in the period. `inactivity` and `user_request` are "
+    "normal endings; `usage_limit_exceeded` / `error` indicate blocked work."
+)
+outcome = status_detail_breakdown(s)
+fig = px.bar(outcome, x="status_detail", y="sessions", hover_data=["share"])
+ui.chart(outcome, fig, "session_outcomes")
 
 st.subheader("Session size distribution")
 sizes = ins.session_size.str.lower().value_counts().reindex(["xs", "s", "m", "l", "xl"]).fillna(0)

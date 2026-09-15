@@ -4,43 +4,21 @@ import plotly.express as px
 import streamlit as st
 
 from devin_kpi.app import data, ui
-from devin_kpi.kpis.filters import apply_filters
-from devin_kpi.kpis.formulas import compute_all
-from devin_kpi.kpis.metrics_reported import reported_metrics
-from devin_kpi.store import Store
 
-st.set_page_config(page_title="Cost", layout="wide")
-st.title("Cost")
-data.demo_banner()
-d = data.load_all()
-settings = data.get_settings()
-f, compare = ui.sidebar_filters(d)
-s, p = apply_filters(d["sessions"], d["prs"], f)
+ctx = data.page_context("Cost")
+s, kvs, prev = ctx.sessions, ctx.kvs, ctx.prev
 
-store = Store(data.db_path())
-reported = reported_metrics(store, f.start, f.end)
-store.close()
-
-kvs = {
-    k.key: k
-    for k in compute_all(
-        s, p, d["insights"], d["issues"], d["consumption"], f, settings, reported=reported
-    )
-}
-
-cols = st.columns(4)
-for c, k in zip(
-    cols, ("acus_per_session_mean", "acus_per_session_median", "acus_per_merged_pr", "total_acus")
-):
-    ui.kpi_card(kvs[k], col=c)
-cols = st.columns(3)
-for c, k in zip(cols, ("cost_per_merged_pr", "cost_per_session", "cost_per_story_point")):
-    ui.kpi_card(kvs[k], col=c)
-if kvs["acus_per_story_point"].available:
-    ui.kpi_card(kvs["acus_per_story_point"])
+hidden = ui.kpi_row(kvs, ("total_cost", "cost_per_merged_pr", "cost_per_session"), prev)
+hidden += ui.kpi_row(
+    kvs,
+    ("total_acus", "acus_per_merged_pr", "acus_per_session_mean", "acus_per_session_median"),
+    prev,
+)
+hidden += ui.kpi_row(kvs, ("cost_per_story_point", "acus_per_story_point"), prev)
+ui.setup_expander(hidden)
 
 st.subheader("ACU distribution by session size")
-ins = d["insights"][d["insights"].session_id.isin(s.session_id)]
+ins = ctx.insights
 m = s.merge(ins[["session_id", "session_size"]], on="session_id", how="left").assign(
     session_size=lambda df: df.session_size.str.lower()
 )

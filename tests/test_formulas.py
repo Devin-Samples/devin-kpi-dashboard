@@ -8,7 +8,14 @@ import pytest
 
 from devin_kpi.config import Settings
 from devin_kpi.kpis.filters import FilterSet, previous_period
-from devin_kpi.kpis.formulas import compute_all, current_and_previous
+from devin_kpi.kpis.formulas import (
+    compute_all,
+    current_and_previous,
+    human_sessions,
+    is_service_session,
+    leaderboard,
+    status_detail_breakdown,
+)
 
 
 def ep(ts):
@@ -33,6 +40,8 @@ def _session(sid, user, status, created, updated, acus, **kw):
         automation_id=None,
         devin_mode="interactive",
         repo_names_json="[]",
+        service_user_id=None,
+        status_detail="user_request",
     )
     row.update(kw)
     return row
@@ -45,6 +54,35 @@ SESSIONS = pd.DataFrame(
         _session("s2", "u2", "exit", 200000, 203600, 2.0),
         _session("s3", "u3", "running", 300000, 301800, 6.0),
         _session("s4", "u4", "exit", 400000, 407200, 8.0, playbook_id="pb1"),
+    ]
+)
+
+# Machine-generated sessions inside the window: one via a service user
+# (api origin), one via origin alone (code_scan). Both must be excluded from
+# human adoption counts but still count toward volume/cost.
+SERVICE_SESSIONS = pd.DataFrame(
+    [
+        _session(
+            "s6",
+            "svc1",
+            "exit",
+            405000,
+            405600,
+            1.0,
+            origin="api",
+            service_user_id="svc1",
+            status_detail="usage_limit_exceeded",
+        ),
+        _session(
+            "s7",
+            "u7",
+            "exit",
+            406000,
+            406600,
+            1.0,
+            origin="code_scan",
+            status_detail="error",
+        ),
     ]
 )
 
@@ -207,6 +245,13 @@ def test_cost():
     # s1 linked, 4 acus / 5 pts = 0.8 acu/pt, *2 = 1.6
     assert r["acus_per_story_point"].value == pytest.approx(0.8)
     assert r["cost_per_story_point"].value == pytest.approx(1.6)
+    assert r["total_cost"].value == pytest.approx(40.0)
+
+
+def test_total_cost_unavailable_without_price():
+    r = results(settings=Settings(DEVIN_API_KEY="k"))
+    assert r["total_cost"].available is False
+    assert "ACU_UNIT_PRICE" in r["total_cost"].depends_on
 
 
 def test_adoption():
@@ -217,6 +262,79 @@ def test_adoption():
     assert r["stickiness"].value == pytest.approx(0.25)
     assert r["active_vs_licensed"].value == pytest.approx(4 / 10)
     assert r["playbook_automation_share"].value == pytest.approx(0.25)
+
+
+def test_service_session_detection():
+    all_s = pd.concat([SESSIONS, SERVICE_SESSIONS], ignore_index=True)
+    flags = is_service_session(all_s)
+    assert list(all_s[flags].session_id) == ["s6", "s7"]
+    assert set(human_sessions(all_s).session_id) == {"s1", "s2", "s3", "s4", "s5"}
+    assert is_service_session(all_s.iloc[0:0]).empty
+
+
+def test_adoption_excludes_service_sessions():
+    all_s = pd.concat([SESSIONS, SERVICE_SESSIONS], ignore_index=True)
+    r = results(sessions=all_s)
+    # volume counts every session ...
+    assert r["sessions_completed"].value == 5
+    assert r["total_acus"].value == pytest.approx(22.0)
+    # ... but adoption only counts humans (s6/s7 are on the last day)
+    assert r["dau"].value == 1
+    assert r["wau"].value == 4
+    assert r["mau"].value == 4
+    assert r["active_vs_licensed"].value == pytest.approx(4 / 10)
+    assert "excludes 2 service" in r["mau"].note
+
+
+def test_outcome_rates():
+    all_s = pd.concat([SESSIONS, SERVICE_SESSIONS], ignore_index=True)
+    r = results(sessions=all_s)
+    assert r["usage_limit_hit_rate"].value == pytest.approx(1 / 6)
+    assert r["usage_limit_hit_rate"].numerator == 1
+    assert r["session_error_rate"].value == pytest.approx(1 / 6)
+    empty = results(sessions=SESSIONS.iloc[0:0])
+    assert empty["usage_limit_hit_rate"].available is False
+
+
+def test_status_detail_breakdown():
+    all_s = pd.concat([SESSIONS, SERVICE_SESSIONS], ignore_index=True)
+    b = status_detail_breakdown(all_s).set_index("status_detail")
+    assert b.loc["user_request", "sessions"] == 5
+    assert b.loc["usage_limit_exceeded", "sessions"] == 1
+    assert b.loc["error", "sessions"] == 1
+    assert b.sessions.sum() == 7
+    assert b.share.sum() == pytest.approx(1.0)
+    assert list(status_detail_breakdown(all_s.iloc[0:0]).columns) == [
+        "status_detail",
+        "sessions",
+        "share",
+    ]
+
+
+def test_leaderboard_by_user():
+    lb = leaderboard(SESSIONS, PRS, "user_id", acu_price=2.0).set_index("user_id")
+    assert list(lb.index[:2]) == ["u9", "u4"]  # sorted by ACUs desc: 10, 8
+    assert lb.loc["u1", "sessions"] == 1
+    assert lb.loc["u1", "prs_created"] == 1
+    assert lb.loc["u1", "prs_merged"] == 1
+    assert lb.loc["u1", "merge_rate"] == pytest.approx(1.0)
+    assert lb.loc["u1", "acus_per_merged_pr"] == pytest.approx(4.0)
+    assert lb.loc["u1", "cost"] == pytest.approx(8.0)
+    assert lb.loc["u2", "merge_rate"] == pytest.approx(0.0)
+    assert pd.isna(lb.loc["u3", "merge_rate"])  # no PRs
+    assert pd.isna(lb.loc["u3", "acus_per_merged_pr"])
+
+
+def test_leaderboard_by_org_and_top():
+    lb = leaderboard(SESSIONS, PRS, "org_id")
+    assert len(lb) == 1
+    assert lb.iloc[0].sessions == 5
+    assert lb.iloc[0].prs_merged == 2
+    assert "cost" not in lb.columns
+    assert len(leaderboard(SESSIONS, PRS, "user_id", top=2)) == 2
+    assert leaderboard(SESSIONS.iloc[0:0], PRS, "user_id").empty
+    no_prs = leaderboard(SESSIONS, PRS.iloc[0:0], "user_id")
+    assert (no_prs.prs_created == 0).all()
 
 
 def test_quality():

@@ -1,10 +1,12 @@
 # Devin KPI Dashboard
 
 An open-source, self-hostable reporting dashboard that turns the raw data
-exposed by the **Devin Enterprise API** into engineering KPIs a delivery
-lead or finance stakeholder can put in front of an executive: throughput,
-request-to-merge cycle time, cost per delivered unit in ACUs and dollars,
-adoption trends, and consumption by product.
+exposed by the **Devin Enterprise API** into KPIs an engineering executive
+actually asks about: how much shipped (merged PRs), what each delivered
+unit cost in ACUs and dollars, whether adoption is growing among real
+engineers, and where sessions are failing or hitting limits. The Overview
+page is a one-screen executive summary with plain-English takeaways and
+period-over-period deltas; the sub-pages carry the diagnostics.
 
 The app is **read-only**: it authenticates with a Devin service-user API
 key or PAT (`cog_…`) as a bearer token, works with a read-only role, and
@@ -57,8 +59,30 @@ docker compose up --build     # http://localhost:8501
    Charts that need enrichment degrade gracefully and say so.
 3. **Dashboard** (`make run`) computes every KPI from the fact tables via
    pure pandas functions — all filterable by date, org, user, category,
-   origin, repo, and tag, with previous-period comparison. API-reported
-   metric snapshots are shown alongside for cross-checking.
+   origin, repo, and tag (the last two only appear when the data has
+   values), with previous-period comparison. API-reported metric
+   snapshots are shown alongside for cross-checking.
+
+### Pages
+
+| Page | Audience question | Needs |
+|---|---|---|
+| **Overview** | Are we shipping, what does it cost, who is adopting, what needs attention? Plain-English summary + headline cards + weekly trend. | API only |
+| Throughput | Completed sessions, PRs created / merged / closed, merge rate, takeover rate. | API only |
+| Cycle time | Session duration; request-to-merge and PR open-to-merge once a git token is set. | API (+ git) |
+| Cost | Spend and ACUs per session / merged PR / story point, by size and category. | API (+ `ACU_UNIT_PRICE`, tracker) |
+| Consumption | Daily ACUs by product, billing cycles. | API only |
+| Adoption | Human DAU/WAU/MAU (service accounts and code-scan/automation sessions excluded), computed vs API-reported, playbook share, seat utilisation. | API (+ `SEAT_COUNT`) |
+| Quality | How sessions end (`status_detail`), usage-limit and error rates, session size, user messages, recurring issue types. | API only |
+| Code scans | Scans run, repos covered, remediation PR pipeline, open findings by severity. | API only |
+| Teams | Per-organization and per-user rollups (opaque IDs only): sessions, ACUs, merged PRs, merge rate, ACUs per merged PR. | API only |
+| Activity | Audit-log events per day by action type, logins, member changes. No actor emails. | API only (enterprise scope) |
+| Definitions / Data status | Formula for every KPI; freshness, row counts, enrichment status. | — |
+
+KPIs that depend on optional setup (git token, tracker credentials,
+`ACU_UNIT_PRICE`, `SEAT_COUNT`) are hidden from the main layout until that
+setup exists and listed once in a collapsed "needs setup" section, so an
+unconfigured install never shows a wall of `n/a` cards.
 
 ### Scope detection
 
@@ -146,16 +170,17 @@ Regenerate this section with `python scripts/gen_definitions_md.py`.
 | Cost per story point (`cost_per_story_point`) | sum(acus of sessions w/ pointed issues) / sum(story_points) * ACU_UNIT_PRICE | session_issues (tracker enrichment) | tracker_enrichment, ACU_UNIT_PRICE |
 | ACUs per story point (`acus_per_story_point`) | sum(acus of sessions w/ pointed issues) / sum(story_points) | session_issues (tracker enrichment) | tracker_enrichment |
 | Total ACUs (`total_acus`) | sum(acus_consumed) | sessions list | — |
+| Total spend (`total_cost`) | total_acus * ACU_UNIT_PRICE | sessions + config | ACU_UNIT_PRICE |
 
 ## Adoption
 
 | KPI | Formula | Source | Depends on |
 | --- | --- | --- | --- |
-| DAU (`dau`) | distinct users with >=1 session on the period's last day | sessions list | — |
-| WAU (`wau`) | distinct users with >=1 session in the last 7 days of the period | sessions list | — |
-| MAU (`mau`) | distinct users with >=1 session in the last 30 days of the period | sessions list | — |
+| DAU (`dau`) | distinct human users with >=1 session on the period's last day (excludes service users and code_scan/automation origins) | sessions list | — |
+| WAU (`wau`) | distinct human users with >=1 session in the last 7 days of the period | sessions list | — |
+| MAU (`mau`) | distinct human users with >=1 session in the last 30 days of the period | sessions list | — |
 | Stickiness (DAU/MAU) (`stickiness`) | DAU / MAU | sessions list | — |
-| Active users vs licensed (`active_vs_licensed`) | distinct active users in period / SEAT_COUNT | sessions + config SEAT_COUNT | SEAT_COUNT |
+| Active users vs licensed (`active_vs_licensed`) | distinct human users active in period / SEAT_COUNT | sessions + config SEAT_COUNT | SEAT_COUNT |
 | Playbook & automation share (`playbook_automation_share`) | sessions with playbook_id or automation_id / all sessions | sessions list | — |
 
 ## Quality & efficiency
@@ -167,6 +192,8 @@ Regenerate this section with `python scripts/gen_definitions_md.py`.
 | Closed-without-merge rate (`closed_without_merge_rate`) | prs_closed_unmerged / prs_created | sessions pull_requests[] | — |
 | Review comments per merged PR (`review_comments_per_merged_pr`) | mean(review_comments) over merged PRs | session_prs (git enrichment) | git_enrichment |
 | Review rounds per merged PR (`review_rounds_per_merged_pr`) | mean(review_rounds) over merged PRs | session_prs (git enrichment) | git_enrichment |
+| Sessions stopped by usage limit (`usage_limit_hit_rate`) | sessions with status_detail in (usage_limit_exceeded, org_usage_limit_exceeded, user_usage_limit_exceeded) / sessions created | sessions list (status_detail) | — |
+| Sessions ended in error (`session_error_rate`) | sessions with status_detail error / sessions created | sessions list (status_detail) | — |
 <!-- KPI_DEFINITIONS_END -->
 
 ## CSV export
@@ -194,6 +221,10 @@ dataset.
 ![Cost](docs/screenshots/cost.png)
 ![Consumption](docs/screenshots/consumption.png)
 ![Adoption](docs/screenshots/adoption.png)
+![Quality](docs/screenshots/quality.png)
+![Code scans](docs/screenshots/code_scans.png)
+![Teams](docs/screenshots/teams.png)
+![Activity](docs/screenshots/activity.png)
 
 ## Privacy
 

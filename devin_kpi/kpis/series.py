@@ -46,6 +46,50 @@ def weekly_session_counts(sessions: pd.DataFrame) -> pd.DataFrame:
     return df.groupby("week").size().reset_index(name="sessions")
 
 
+def weekly_acus(sessions: pd.DataFrame) -> pd.DataFrame:
+    """ACUs consumed per ISO week (by session creation). Columns [week, acus]."""
+    if sessions.empty:
+        return pd.DataFrame(columns=["week", "acus"])
+    df = sessions.assign(week=_ts(sessions.created_at).dt.to_period("W-SUN").dt.start_time)
+    return df.groupby("week").acus_consumed.sum(min_count=1).fillna(0.0).reset_index(name="acus")
+
+
+def weekly_merged_prs(prs: pd.DataFrame, sessions: pd.DataFrame) -> pd.DataFrame:
+    """Merged PRs per ISO week. Columns [week, prs_merged]."""
+    wk = weekly_pr_counts(prs, sessions)
+    if wk.empty:
+        return pd.DataFrame(columns=["week", "prs_merged"])
+    merged = wk[wk.pr_state == "merged"]
+    return merged.groupby("week").prs.sum().reset_index(name="prs_merged")
+
+
+def daily_audit_events(audit: pd.DataFrame, top: int = 8) -> pd.DataFrame:
+    """Audit events per day by action type; types outside the `top` most
+    frequent are folded into "other". Columns [date, event_type, events].
+    Never includes actor columns."""
+    if audit.empty:
+        return pd.DataFrame(columns=["date", "event_type", "events"])
+    df = audit.assign(
+        date=_ts(audit.occurred_at).dt.floor("D"),
+        event_type=audit.event_type.fillna("unknown"),
+    )
+    keep = df.event_type.value_counts().head(top).index
+    df["event_type"] = df.event_type.where(df.event_type.isin(keep), "other")
+    return df.groupby(["date", "event_type"]).size().reset_index(name="events")
+
+
+def audit_event_counts(audit: pd.DataFrame) -> pd.DataFrame:
+    """Total events per action type. Columns [event_type, events]."""
+    if audit.empty:
+        return pd.DataFrame(columns=["event_type", "events"])
+    return (
+        audit.event_type.fillna("unknown")
+        .value_counts()
+        .rename_axis("event_type")
+        .reset_index(name="events")
+    )
+
+
 def weekly_pr_counts(prs: pd.DataFrame, sessions: pd.DataFrame) -> pd.DataFrame:
     """PRs per week by state. Columns [week, pr_state, prs]."""
     if prs.empty or sessions.empty:

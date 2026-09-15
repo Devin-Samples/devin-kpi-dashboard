@@ -5,10 +5,23 @@ from test_formulas import INSIGHTS, PRS, SESSIONS, _session
 
 from devin_kpi.kpis.series import (
     active_users_rolling,
+    audit_event_counts,
     daily_active_users,
+    daily_audit_events,
+    weekly_acus,
+    weekly_merged_prs,
     weekly_pr_counts,
     weekly_session_counts,
     weekly_user_messages,
+)
+
+AUDIT = pd.DataFrame(
+    [
+        {"event_id": f"e{i}", "occurred_at": 86400 * (i % 3), "event_type": t, "actor": "u1"}
+        for i, t in enumerate(
+            ["login"] * 5 + ["create_session"] * 4 + ["send_message"] * 3 + ["add_member", None]
+        )
+    ]
 )
 
 
@@ -73,7 +86,37 @@ def test_weekly_user_messages():
     assert df.avg_user_messages.notna().all()
 
 
+def test_weekly_acus_and_merged_prs():
+    acus = weekly_acus(SESSIONS)
+    assert acus.acus.sum() == SESSIONS.acus_consumed.sum()
+    merged = weekly_merged_prs(PRS, SESSIONS)
+    assert merged.prs_merged.sum() == (PRS.pr_state == "merged").sum()
+    assert list(merged.columns) == ["week", "prs_merged"]
+    # a session with NULL acus contributes 0, not NaN
+    with_null = pd.concat([SESSIONS, pd.DataFrame([_session("n", "u", "exit", 1, 2, None)])])
+    assert weekly_acus(with_null).acus.notna().all()
+
+
+def test_daily_audit_events_folds_rare_types_and_hides_actors():
+    df = daily_audit_events(AUDIT, top=2)
+    assert df.events.sum() == len(AUDIT)
+    assert set(df.event_type) == {"login", "create_session", "other"}
+    assert "actor" not in df.columns
+    assert df.date.nunique() == 3
+
+
+def test_audit_event_counts():
+    df = audit_event_counts(AUDIT).set_index("event_type")
+    assert df.loc["login", "events"] == 5
+    assert df.loc["unknown", "events"] == 1
+    assert df.events.sum() == len(AUDIT)
+
+
 def test_empty_inputs():
     empty = SESSIONS.iloc[0:0]
     assert daily_active_users(empty).empty
     assert weekly_session_counts(empty).empty
+    assert weekly_acus(empty).empty
+    assert weekly_merged_prs(PRS.iloc[0:0], SESSIONS).empty
+    assert daily_audit_events(AUDIT.iloc[0:0]).empty
+    assert audit_event_counts(AUDIT.iloc[0:0]).empty

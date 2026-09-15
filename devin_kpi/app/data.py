@@ -3,10 +3,16 @@ SQLite store; in demo mode the synthetic DB is generated on first run."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 import streamlit as st
 
+from devin_kpi.app.ui import sidebar_filters
 from devin_kpi.config import Settings
+from devin_kpi.kpis.filters import FilterSet, apply_filters, previous_period
+from devin_kpi.kpis.formulas import KpiValue, compute_all
+from devin_kpi.kpis.metrics_reported import reported_metrics
 from devin_kpi.store import Store
 from devin_kpi.synth.generate import ensure_demo_db
 
@@ -53,6 +59,75 @@ def load_all() -> dict:
         }
     finally:
         s.close()
+
+
+@dataclass
+class PageContext:
+    """Everything a KPI page needs after the sidebar has been rendered."""
+
+    data: dict
+    settings: Settings
+    f: FilterSet
+    compare: bool
+    sessions: pd.DataFrame
+    prs: pd.DataFrame
+    insights: pd.DataFrame
+    issues: pd.DataFrame
+    reported: dict
+    kvs: dict[str, KpiValue]
+    prev: dict[str, KpiValue]
+
+    def prev_value(self, key: str) -> float | None:
+        kv = self.prev.get(key)
+        return kv.value if kv else None
+
+
+def _subset(df: pd.DataFrame, session_ids: pd.Series) -> pd.DataFrame:
+    return df[df.session_id.isin(session_ids)] if not df.empty else df
+
+
+def _compute(d: dict, f: FilterSet, settings: Settings, reported: dict) -> dict[str, KpiValue]:
+    s, p = apply_filters(d["sessions"], d["prs"], f)
+    ins = _subset(d["insights"], s.session_id)
+    iss = _subset(d["issues"], s.session_id)
+    return {
+        k.key: k
+        for k in compute_all(s, p, ins, iss, d["consumption"], f, settings, reported=reported)
+    }
+
+
+def page_context(title: str) -> PageContext:
+    """Render page chrome + sidebar, load data and compute current (and, if
+    requested, previous-period) KPIs. Shared by every page."""
+    st.set_page_config(page_title=title, layout="wide")
+    st.title(title)
+    demo_banner()
+    d = load_all()
+    settings = get_settings()
+    f, compare = sidebar_filters(d)
+    s, p = apply_filters(d["sessions"], d["prs"], f)
+
+    st_ = store()
+    try:
+        reported = reported_metrics(st_, f.start, f.end)
+    finally:
+        st_.close()
+
+    kvs = _compute(d, f, settings, reported)
+    prev = _compute(d, previous_period(f), settings, reported) if compare else {}
+    return PageContext(
+        data=d,
+        settings=settings,
+        f=f,
+        compare=compare,
+        sessions=s,
+        prs=p,
+        insights=_subset(d["insights"], s.session_id),
+        issues=_subset(d["issues"], s.session_id),
+        reported=reported,
+        kvs=kvs,
+        prev=prev,
+    )
 
 
 def demo_banner() -> None:

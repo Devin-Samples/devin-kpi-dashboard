@@ -30,6 +30,44 @@ TERMINAL_STATUSES = (
 MERGED_STATES = ("merged",)
 CLOSED_STATES = ("closed", "closed_unmerged")
 
+# Sessions started by non-human principals: service users (API keys) and
+# machine-driven origins. Excluded from active-user KPIs.
+SERVICE_ORIGINS = ("code_scan", "automation")
+
+# status_detail values that mean the session ended for a bad reason.
+LIMIT_DETAILS = ("usage_limit_exceeded", "org_usage_limit_exceeded", "user_usage_limit_exceeded")
+ERROR_DETAILS = ("error",)
+
+# KPIs where a decrease is good; drives delta colouring in the UI.
+LOWER_IS_BETTER = frozenset(
+    {
+        "prs_closed_unmerged",
+        "human_takeover_rate",
+        "request_to_merge_median",
+        "request_to_merge_p90",
+        "session_duration_median",
+        "session_duration_p90",
+        "pr_open_to_merge_median",
+        "pr_open_to_merge_p90",
+        "acus_per_session_mean",
+        "acus_per_session_median",
+        "acus_per_merged_pr",
+        "cost_per_merged_pr",
+        "cost_per_session",
+        "cost_per_story_point",
+        "acus_per_story_point",
+        "large_session_share",
+        "user_messages_per_session",
+        "closed_without_merge_rate",
+        "review_comments_per_merged_pr",
+        "review_rounds_per_merged_pr",
+        "usage_limit_hit_rate",
+        "session_error_rate",
+    }
+)
+# KPIs that are volume, not quality — deltas rendered neutrally.
+NEUTRAL = frozenset({"total_acus", "total_cost"})
+
 DAY = 86400
 
 
@@ -50,6 +88,19 @@ class KpiValue:
 def _is_terminal(status: pd.Series) -> pd.Series:
     s = status.fillna("").str.lower()
     return s.ne("") & (s.ne("running") | s.apply(lambda v: any(t in v for t in TERMINAL_STATUSES)))
+
+
+def is_service_session(sessions: pd.DataFrame) -> pd.Series:
+    """True for sessions started by a service user or a machine origin."""
+    if sessions.empty:
+        return pd.Series(dtype=bool, index=sessions.index)
+    by_service_user = sessions.service_user_id.notna()
+    by_origin = sessions.origin.fillna("").str.lower().isin(SERVICE_ORIGINS)
+    return by_service_user | by_origin
+
+
+def human_sessions(sessions: pd.DataFrame) -> pd.DataFrame:
+    return sessions[~is_service_session(sessions)]
 
 
 def _median(series: pd.Series) -> float | None:
@@ -236,10 +287,12 @@ def compute_all(
                 available=acus_mean is not None,
             )
         )
+        out.append(_kv("total_cost", total_acus * price, "usd", num=total_acus))
     else:
         note = "requires ACU_UNIT_PRICE configuration"
         out.append(_unavailable("cost_per_merged_pr", "usd", note))
         out.append(_unavailable("cost_per_session", "usd", note))
+        out.append(_unavailable("total_cost", "usd", note))
 
     pointed = iss[iss.story_points.notna()] if not iss.empty else iss
     if len(pointed):
@@ -268,19 +321,22 @@ def compute_all(
         out.append(_unavailable("acus_per_story_point", "acu", note))
         out.append(_unavailable("cost_per_story_point", "usd", note))
 
-    # ---- Adoption
+    # ---- Adoption (active-user KPIs count humans only)
+    h = human_sessions(s) if n_sessions else s
+    n_service = n_sessions - len(h)
     if n_sessions:
         end_ts = int(f.end.timestamp())
-        dau = s[s.created_at >= end_ts - DAY].user_id.nunique()
-        wau = s[s.created_at >= end_ts - 7 * DAY].user_id.nunique()
-        mau = s[s.created_at >= end_ts - 30 * DAY].user_id.nunique()
-        active = s.user_id.nunique()
+        dau = h[h.created_at >= end_ts - DAY].user_id.nunique()
+        wau = h[h.created_at >= end_ts - 7 * DAY].user_id.nunique()
+        mau = h[h.created_at >= end_ts - 30 * DAY].user_id.nunique()
+        active = h.user_id.nunique()
         pb = int((s.playbook_id.notna() | s.automation_id.notna()).sum())
     else:
         dau = wau = mau = active = pb = 0
-    out.append(_kv("dau", float(dau), "users"))
-    out.append(_kv("wau", float(wau), "users"))
-    out.append(_kv("mau", float(mau), "users"))
+    svc_note = f"excludes {n_service:,} service/automation sessions" if n_service else None
+    out.append(_kv("dau", float(dau), "users", note=svc_note))
+    out.append(_kv("wau", float(wau), "users", note=svc_note))
+    out.append(_kv("mau", float(mau), "users", note=svc_note))
     out.append(
         _kv(
             "stickiness",
@@ -353,6 +409,21 @@ def compute_all(
             available=bool(n_prs),
         )
     )
+    detail = s.status_detail.fillna("").str.lower() if n_sessions else pd.Series(dtype=str)
+    n_limit = int(detail.isin(LIMIT_DETAILS).sum())
+    n_error = int(detail.isin(ERROR_DETAILS).sum())
+    for key, n in (("usage_limit_hit_rate", n_limit), ("session_error_rate", n_error)):
+        out.append(
+            _kv(
+                key,
+                n / n_sessions if n_sessions else None,
+                "ratio",
+                num=n,
+                den=n_sessions,
+                available=bool(n_sessions),
+                note=None if n_sessions else "no sessions in period",
+            )
+        )
     if git_ok:
         rc = merged.review_comments.dropna()
         rr = merged.review_rounds.dropna()
@@ -435,6 +506,64 @@ def current_and_previous(
         reported=reported,
     )
     return kpi_table(cur, prev)
+
+
+def status_detail_breakdown(sessions: pd.DataFrame) -> pd.DataFrame:
+    """Sessions per status_detail (how sessions ended). Columns
+    [status_detail, sessions, share]."""
+    if sessions.empty:
+        return pd.DataFrame(columns=["status_detail", "sessions", "share"])
+    counts = (
+        sessions.status_detail.fillna("unknown")
+        .str.lower()
+        .value_counts()
+        .rename_axis("status_detail")
+        .reset_index(name="sessions")
+    )
+    counts["share"] = counts.sessions / counts.sessions.sum()
+    return counts
+
+
+def leaderboard(
+    sessions: pd.DataFrame,
+    prs: pd.DataFrame,
+    by: str,
+    acu_price: float | None = None,
+    top: int | None = None,
+) -> pd.DataFrame:
+    """Per-`by` (org_id | user_id) rollup: sessions, ACUs, merged PRs,
+    merge rate, ACUs per merged PR and optional cost. Sorted by ACUs."""
+    cols = [by, "sessions", "acus", "prs_created", "prs_merged", "merge_rate", "acus_per_merged_pr"]
+    if acu_price is not None:
+        cols.append("cost")
+    if sessions.empty:
+        return pd.DataFrame(columns=cols)
+    g = sessions.groupby(by, dropna=False)
+    out = pd.DataFrame({"sessions": g.size(), "acus": g.acus_consumed.sum(min_count=1).fillna(0.0)})
+    if prs.empty:
+        out["prs_created"] = 0
+        out["prs_merged"] = 0
+    else:
+        pj = prs.merge(sessions[["session_id", by]], on="session_id", how="inner")
+        pg = pj.groupby(by, dropna=False)
+        out["prs_created"] = pg.size().reindex(out.index).fillna(0).astype(int)
+        merged_mask = pj.pr_state.str.lower().isin(MERGED_STATES)
+        out["prs_merged"] = (
+            pj[merged_mask]
+            .groupby(by, dropna=False)
+            .size()
+            .reindex(out.index)
+            .fillna(0)
+            .astype(int)
+        )
+    out["merge_rate"] = (out.prs_merged / out.prs_created).where(out.prs_created > 0)
+    out["acus_per_merged_pr"] = (out.acus / out.prs_merged).where(out.prs_merged > 0)
+    if acu_price is not None:
+        out["cost"] = out.acus * acu_price
+    out = out.sort_values("acus", ascending=False).rename_axis(by).reset_index()
+    if top:
+        out = out.head(top)
+    return out[cols]
 
 
 def analysis_issue_counts(insights: pd.DataFrame) -> pd.Series:

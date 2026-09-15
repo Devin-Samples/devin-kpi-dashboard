@@ -11,7 +11,8 @@ st.title("KPI definitions")
 data.demo_banner()
 
 st.info(
-    "Session statuses treated as terminal: "
+    "A session is terminal when its status is `exit` or `suspended` "
+    "(anything not `running`); legacy synonyms also match: "
     + ", ".join(f"`{s}`" for s in TERMINAL_STATUSES)
     + ". Daily consumption is bucketed on midnight Pacific "
     "(America/Los_Angeles; 08:00 UTC in winter, 07:00 UTC in summer), "

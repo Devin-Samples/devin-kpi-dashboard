@@ -45,7 +45,7 @@ for c, k in zip(
     ui.kpi_card(kvs[k], col=c)
 
 st.subheader("Session size distribution")
-sizes = ins.session_size.value_counts().reindex(["XS", "S", "M", "L", "XL"]).fillna(0)
+sizes = ins.session_size.str.lower().value_counts().reindex(["xs", "s", "m", "l", "xl"]).fillna(0)
 size_df = sizes.rename_axis("size").reset_index(name="sessions")
 fig = px.bar(size_df, x="size", y="sessions")
 ui.chart(size_df, fig, "size_distribution")

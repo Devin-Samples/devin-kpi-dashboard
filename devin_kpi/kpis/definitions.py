@@ -7,7 +7,8 @@ DEFINITIONS: dict[str, dict] = {
     "sessions_completed": {
         "group": "Throughput",
         "label": "Sessions completed",
-        "formula": "Count of sessions with a terminal status in period",
+        "formula": "Count of sessions with a terminal status in period "
+        "(status is exit or suspended — anything not running)",
         "source": "sessions list",
         "depends_on": [],
     },

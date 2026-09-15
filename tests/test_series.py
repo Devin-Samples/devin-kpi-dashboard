@@ -36,10 +36,8 @@ def test_rolling_actives_see_sessions_before_range():
     now = 60 * day  # arbitrary epoch
     sessions = pd.DataFrame(
         [
-            _session("a1", "old_user", "finished", now - 31 * day, now - 31 * day + 100, 1.0),
-            _session(
-                "a2", "new_user", "finished", now - 30 * day + 3600, now - 30 * day + 3700, 1.0
-            ),
+            _session("a1", "old_user", "exit", now - 31 * day, now - 31 * day + 100, 1.0),
+            _session("a2", "new_user", "exit", now - 30 * day + 3600, now - 30 * day + 3700, 1.0),
         ]
     )
     mau = active_users_rolling(sessions, 30)

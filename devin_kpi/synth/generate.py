@@ -28,9 +28,9 @@ ORGS = [("org_synth_01", "org_alpha"), ("org_synth_02", "org_beta"), ("org_synth
 ORG_WEIGHTS = [0.5, 0.3, 0.2]
 USERS = [f"user_synth_{i:03d}" for i in range(1, N_USERS + 1)]
 
-SIZES = ["XS", "S", "M", "L", "XL"]
+SIZES = ["xs", "s", "m", "l", "xl"]
 SIZE_WEIGHTS = [0.30, 0.30, 0.22, 0.12, 0.06]
-SIZE_ACU_MEAN = {"XS": 0.5, "S": 1.5, "M": 4.0, "L": 10.0, "XL": 25.0}
+SIZE_ACU_MEAN = {"xs": 0.5, "s": 1.5, "m": 4.0, "l": 10.0, "xl": 25.0}
 
 CATEGORIES = {
     "feature_development": ["new_endpoint", "ui_change", "data_pipeline"],
@@ -41,18 +41,16 @@ CATEGORIES = {
 }
 CAT_WEIGHTS = [0.40, 0.25, 0.12, 0.15, 0.08]
 
+# Real session origins vocabulary.
 ORIGINS = [
     "webapp",
     "slack",
     "api",
-    "jira",
-    "linear",
     "automation",
-    "teams",
-    "desktop",
     "code_scan",
+    "desktop",
 ]
-ORIGIN_WEIGHTS = [0.45, 0.15, 0.10, 0.08, 0.05, 0.10, 0.03, 0.02, 0.02]
+ORIGIN_WEIGHTS = [0.45, 0.15, 0.15, 0.12, 0.08, 0.05]
 
 REPOS = [
     "example-org/payments-api",
@@ -78,8 +76,19 @@ ISSUE_TYPES = [
     "large_diff",
 ]
 
-TERMINAL = ["finished", "stopped", "blocked", "expired"]
-NON_TERMINAL = ["running", "working", "queued", "suspended"]
+# Real session vocabulary: status is always running | suspended | exit.
+STATUSES = ["running", "suspended", "exit"]
+STATUS_WEIGHTS = [0.01, 0.95, 0.04]
+
+# status_detail vocab per status (real API values).
+STATUS_DETAILS = {
+    "running": (["working", "waiting_for_user"], [0.6, 0.4]),
+    "suspended": (
+        ["inactivity", "user_request", "usage_limit_exceeded"],
+        [0.80, 0.15, 0.05],
+    ),
+    "exit": (["user_request", "error"], [0.85, 0.15]),
+}
 
 
 def _pick(rng: random.Random, items, weights):
@@ -123,8 +132,9 @@ def generate(
         cat = _pick(rng, list(CATEGORIES), CAT_WEIGHTS)
         subcat = rng.choice(CATEGORIES[cat])
         origin = _pick(rng, ORIGINS, ORIGIN_WEIGHTS)
-        terminal = rng.random() < 0.75
-        status = rng.choice(TERMINAL if terminal else NON_TERMINAL)
+        status = _pick(rng, STATUSES, STATUS_WEIGHTS)
+        details, detail_weights = STATUS_DETAILS[status]
+        status_detail = _pick(rng, details, detail_weights)
         duration_h = max(0.05, rng.lognormvariate(math.log(1.2), 0.9))
         updated = created + int(duration_h * 3600)
 
@@ -160,7 +170,7 @@ def generate(
                 "is_archived": 0,
                 "parent_session_id": None,
                 "service_user_id": None,
-                "status_detail": status,
+                "status_detail": status_detail,
                 "url": f"https://app.devin.ai/sessions/{sid}",
                 "repo_names_json": json.dumps([repo]),
                 "raw_json": None,
@@ -408,7 +418,7 @@ def _generate_snapshots(store, sessions_rows, prs_rows, rng, start, now) -> None
     shapes: per-day windows for the count metrics, and whole-range
     snapshots for dau/wau/mau/active-users."""
     zone = ZoneInfo("America/Los_Angeles")
-    size_l = {k: k for k in ("XS", "S", "M", "L", "XL")}
+    size_l = {k: k for k in ("xs", "s", "m", "l", "xl")}
     pr_by_sid = defaultdict(list)
     for pr in prs_rows:
         pr_by_sid[pr["session_id"]].append(pr)
@@ -504,13 +514,13 @@ def _generate_snapshots(store, sessions_rows, prs_rows, rng, start, now) -> None
             "metrics_sessions",
             {
                 "sessions_created_count": st["n"],
-                "sessions_created_by_size": {k.lower(): st["sizes"].get(k, 0) for k in size_l},
+                "sessions_created_by_size": {k: st["sizes"].get(k, 0) for k in size_l},
                 "sessions_created_by_origin": {o: st["origins"].get(o, 0) for o in origins_all},
                 "sessions_created_with_playbook_count": st["playbook"],
                 "sessions_created_with_search_count": int(st["n"] * 0.1),
                 "sessions_with_merged_prs_count": st["merged_sessions"],
                 "sessions_with_merged_prs_by_size": {
-                    k.lower(): st["merged_by_size"].get(k, 0) for k in size_l
+                    k: st["merged_by_size"].get(k, 0) for k in size_l
                 },
                 "avg_acus_per_session": round(st["acus"] / st["n"], 4),
             },
@@ -602,14 +612,14 @@ def _generate_snapshots(store, sessions_rows, prs_rows, rng, start, now) -> None
 def _size_for_acus(acus: float | None) -> str:
     a = acus or 0
     if a < 1.0:
-        return "XS"
+        return "xs"
     if a < 3.0:
-        return "S"
+        return "s"
     if a < 7.0:
-        return "M"
+        return "m"
     if a < 17.0:
-        return "L"
-    return "XL"
+        return "l"
+    return "xl"
 
 
 def ensure_demo_db(settings) -> Store:

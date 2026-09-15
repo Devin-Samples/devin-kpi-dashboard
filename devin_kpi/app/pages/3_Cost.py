@@ -41,12 +41,14 @@ if kvs["acus_per_story_point"].available:
 
 st.subheader("ACU distribution by session size")
 ins = d["insights"][d["insights"].session_id.isin(s.session_id)]
-m = s.merge(ins[["session_id", "session_size"]], on="session_id", how="left")
+m = s.merge(ins[["session_id", "session_size"]], on="session_id", how="left").assign(
+    session_size=lambda df: df.session_size.str.lower()
+)
 fig = px.box(
     m.dropna(subset=["session_size"]),
     x="session_size",
     y="acus_consumed",
-    category_orders={"session_size": ["XS", "S", "M", "L", "XL"]},
+    category_orders={"session_size": ["xs", "s", "m", "l", "xl"]},
 )
 ui.chart(m[["session_size", "acus_consumed"]].dropna(), fig, "acus_by_size")
 

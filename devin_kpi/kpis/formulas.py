@@ -13,9 +13,19 @@ from devin_kpi.config import Settings
 from devin_kpi.kpis.definitions import DEFINITIONS
 from devin_kpi.kpis.filters import FilterSet, apply_filters, previous_period
 
-# Adjustable: statuses treated as terminal for "sessions completed" and
-# session-duration KPIs.
-TERMINAL_STATUSES = ("finished", "stopped", "blocked", "expired", "completed")
+# Adjustable: additional statuses treated as terminal for "sessions completed"
+# and session-duration KPIs. A session is terminal when its status is not
+# "running" (real vocab: exit | suspended); the legacy synonyms are kept as
+# extra matches for forward-compat.
+TERMINAL_STATUSES = (
+    "exit",
+    "suspended",
+    "finished",
+    "stopped",
+    "blocked",
+    "expired",
+    "completed",
+)
 
 MERGED_STATES = ("merged",)
 CLOSED_STATES = ("closed", "closed_unmerged")
@@ -38,7 +48,8 @@ class KpiValue:
 
 
 def _is_terminal(status: pd.Series) -> pd.Series:
-    return status.fillna("").str.lower().apply(lambda s: any(t in s for t in TERMINAL_STATUSES))
+    s = status.fillna("").str.lower()
+    return s.ne("") & (s.ne("running") | s.apply(lambda v: any(t in v for t in TERMINAL_STATUSES)))
 
 
 def _median(series: pd.Series) -> float | None:
@@ -307,7 +318,7 @@ def compute_all(
     # ---- Quality & efficiency
     sized = ins[ins.session_size.notna()] if not ins.empty else ins
     n_sized = len(sized)
-    n_large = int(sized.session_size.isin(["L", "XL"]).sum()) if n_sized else 0
+    n_large = int(sized.session_size.str.lower().isin(["l", "xl"]).sum()) if n_sized else 0
     out.append(
         _kv(
             "large_session_share",

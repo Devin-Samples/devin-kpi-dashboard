@@ -17,7 +17,7 @@ SESSION = {
     "session_id": "ses_1",
     "org_id": "o1",
     "user_id": "u1",
-    "status": "finished",
+    "status": "exit",
     "title": "[ABC-123] fix crash",
     "tags": ["backend", "ABC-123"],
     "created_at": 1_700_000_000,
@@ -32,7 +32,7 @@ SESSION = {
     "is_archived": False,
     "parent_session_id": None,
     "service_user_id": None,
-    "status_detail": "finished",
+    "status_detail": "user_request",
     "url": "https://app.devin.ai/sessions/ses_1",
     "repo_names": ["acme/widgets"],
     "pull_requests": [{"pr_url": "https://github.com/acme/widgets/pull/7", "pr_state": "merged"}],
@@ -241,7 +241,7 @@ def test_collect_idempotent_old_windows(tmp_path):
     # new session fields persisted
     row = store.read_df("sessions").iloc[0]
     assert row.url == "https://app.devin.ai/sessions/ses_1"
-    assert row.status_detail == "finished"
+    assert row.status_detail == "user_request"
     client.close()
 
 

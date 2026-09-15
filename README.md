@@ -115,7 +115,7 @@ Regenerate this section with `python scripts/gen_definitions_md.py`.
 
 | KPI | Formula | Source | Depends on |
 | --- | --- | --- | --- |
-| Sessions completed (`sessions_completed`) | Count of sessions with a terminal status in period | sessions list | — |
+| Sessions completed (`sessions_completed`) | Count of sessions with a terminal status in period (status is exit or suspended — anything not running) | sessions list | — |
 | PRs created (`prs_created`) | Count of session PRs whose session was created in period | sessions pull_requests[] | — |
 | PRs merged (`prs_merged`) | PRs created with pr_state merged | sessions pull_requests[] | — |
 | PRs closed unmerged (`prs_closed_unmerged`) | PRs created with pr_state closed but not merged | sessions pull_requests[] | — |

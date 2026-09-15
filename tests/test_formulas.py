@@ -40,11 +40,11 @@ def _session(sid, user, status, created, updated, acus, **kw):
 
 SESSIONS = pd.DataFrame(
     [
-        _session("s5", "u9", "finished", 20000, 25000, 10.0),  # previous period only
-        _session("s1", "u1", "finished", 100000, 107200, 4.0),
-        _session("s2", "u2", "finished", 200000, 203600, 2.0),
+        _session("s5", "u9", "exit", 20000, 25000, 10.0),  # previous period only
+        _session("s1", "u1", "exit", 100000, 107200, 4.0),
+        _session("s2", "u2", "exit", 200000, 203600, 2.0),
         _session("s3", "u3", "running", 300000, 301800, 6.0),
-        _session("s4", "u4", "finished", 400000, 407200, 8.0, playbook_id="pb1"),
+        _session("s4", "u4", "exit", 400000, 407200, 8.0, playbook_id="pb1"),
     ]
 )
 

@@ -87,13 +87,19 @@ def _subset(df: pd.DataFrame, session_ids: pd.Series) -> pd.DataFrame:
 
 
 def _compute(d: dict, f: FilterSet, settings: Settings, reported: dict) -> dict[str, KpiValue]:
-    s, p = apply_filters(d["sessions"], d["prs"], f)
-    ins = _subset(d["insights"], s.session_id)
-    iss = _subset(d["issues"], s.session_id)
-    return {
-        k.key: k
-        for k in compute_all(s, p, ins, iss, d["consumption"], f, settings, reported=reported)
-    }
+    # compute_all applies `f` itself; it needs the unfiltered facts so that
+    # trailing-window KPIs (DAU/WAU/MAU) can look back past the period start.
+    kvs = compute_all(
+        d["sessions"],
+        d["prs"],
+        d["insights"],
+        d["issues"],
+        d["consumption"],
+        f,
+        settings,
+        reported=reported,
+    )
+    return {k.key: k for k in kvs}
 
 
 def page_context(title: str) -> PageContext:

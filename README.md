@@ -17,6 +17,11 @@ provider / issue tracker for enrichment.
 No API key? The app runs in **demo mode** against a bundled synthetic
 dataset so you can try every page without touching real data.
 
+![Walkthrough of the dashboard in demo mode (synthetic data)](docs/demo/synthetic-demo.gif)
+
+<sub>All images in this README come from the bundled synthetic dataset —
+no real account data. [MP4 version](docs/demo/synthetic-demo.mp4).</sub>
+
 ## Quick start (< 15 minutes)
 
 ### With a real API key
@@ -65,19 +70,50 @@ docker compose up --build     # http://localhost:8501
 
 ### Pages
 
+The Overview is built for an engineering executive: four plain-English
+takeaways, then Delivery / Cost / Adoption & risk cards with
+period-over-period deltas and two weekly trends.
+
+![Overview page: at-a-glance summary, KPI cards with deltas, weekly trends](docs/screenshots/overview.png)
+
 | Page | Audience question | Needs |
 |---|---|---|
 | **Overview** | Are we shipping, what does it cost, who is adopting, what needs attention? Plain-English summary + headline cards + weekly trend. | API only |
-| Throughput | Completed sessions, PRs created / merged / closed, merge rate, takeover rate. | API only |
-| Cycle time | Session duration; request-to-merge and PR open-to-merge once a git token is set. | API (+ git) |
-| Cost | Spend and ACUs per session / merged PR / story point, by size and category. | API (+ `ACU_UNIT_PRICE`, tracker) |
-| Consumption | Daily ACUs by product, billing cycles. | API only |
-| Adoption | Human DAU/WAU/MAU (service accounts and code-scan/automation sessions excluded), computed vs API-reported, playbook share, seat utilisation. | API (+ `SEAT_COUNT`) |
-| Quality | How sessions end (`status_detail`), usage-limit and error rates, session size, user messages, recurring issue types. | API only |
-| Code scans | Scans run, repos covered, remediation PR pipeline, open findings by severity. | API only |
-| Teams | Per-organization and per-user rollups (opaque IDs only): sessions, ACUs, merged PRs, merge rate, ACUs per merged PR. | API only |
-| Activity | Audit-log events per day by action type, logins, member changes. No actor emails. | API only (enterprise scope) |
-| Definitions / Data status | Formula for every KPI; freshness, row counts, enrichment status. | — |
+| [Throughput](docs/screenshots/throughput.png) | Completed sessions, PRs created / merged / closed, merge rate, takeover rate. | API only |
+| [Cycle time](docs/screenshots/cycle_time.png) | Session duration; request-to-merge and PR open-to-merge once a git token is set. | API (+ git) |
+| [Cost](docs/screenshots/cost.png) | Spend and ACUs per session / merged PR / story point, by size and category. | API (+ `ACU_UNIT_PRICE`, tracker) |
+| [Consumption](docs/screenshots/consumption.png) | Daily ACUs by product, billing cycles. | API only |
+| [Adoption](docs/screenshots/adoption.png) | Human DAU/WAU/MAU (service accounts and code-scan/automation sessions excluded), computed vs API-reported, playbook share, seat utilisation. | API (+ `SEAT_COUNT`) |
+| [Quality](docs/screenshots/quality.png) | How sessions end (`status_detail`), usage-limit and error rates, session size, user messages, recurring issue types. | API only |
+| [Code scans](docs/screenshots/code_scans.png) | Scans run, repos covered, remediation PR pipeline, open findings by severity. | API only |
+| [Teams](docs/screenshots/teams.png) | Per-organization and per-user rollups (opaque IDs only): sessions, ACUs, merged PRs, merge rate, ACUs per merged PR. | API only |
+| [Activity](docs/screenshots/activity.png) | Audit-log events per day by action type, logins, member changes. No actor emails. | API only (enterprise scope) |
+| [Definitions](docs/screenshots/definitions.png) / [Data status](docs/screenshots/data_status.png) | Formula for every KPI; freshness, row counts, enrichment status. | — |
+
+<details>
+<summary><strong>Screenshot gallery</strong> (synthetic data)</summary>
+
+| Throughput | Cost |
+|---|---|
+| ![Throughput](docs/screenshots/throughput.png) | ![Cost](docs/screenshots/cost.png) |
+
+| Adoption | Quality |
+|---|---|
+| ![Adoption](docs/screenshots/adoption.png) | ![Quality](docs/screenshots/quality.png) |
+
+| Code scans | Teams |
+|---|---|
+| ![Code scans](docs/screenshots/code_scans.png) | ![Teams](docs/screenshots/teams.png) |
+
+| Consumption | Activity |
+|---|---|
+| ![Consumption](docs/screenshots/consumption.png) | ![Activity](docs/screenshots/activity.png) |
+
+| Cycle time | Data status |
+|---|---|
+| ![Cycle time](docs/screenshots/cycle_time.png) | ![Data status](docs/screenshots/data_status.png) |
+
+</details>
 
 KPIs that depend on optional setup (git token, tracker credentials,
 `ACU_UNIT_PRICE`, `SEAT_COUNT`) are hidden from the main layout until that
@@ -131,8 +167,9 @@ Endpoints with no org equivalent (cycles, audit-logs) are skipped.
 ## KPI definitions
 
 Every displayed number can be traced to a formula below (also shown in
-the app's Definitions page) and reproduced from the exported CSV.
-Regenerate this section with `python scripts/gen_definitions_md.py`.
+the app's [Definitions page](docs/screenshots/definitions.png)) and
+reproduced from the exported CSV. Regenerate this section with
+`python scripts/gen_definitions_md.py`.
 
 <!-- KPI_DEFINITIONS_START -->
 ## Throughput
@@ -203,32 +240,10 @@ Overview page exports the whole KPI table (current vs previous period) —
 built for pasting into someone else's slide deck. CLI equivalent:
 `python -m devin_kpi export-kpis --start 90d --out kpis.csv`.
 
-## Demo
-
-Short walkthrough of the dashboard in demo mode (synthetic data only):
-
-![Synthetic demo](docs/demo/synthetic-demo.gif)
-
-[MP4 version](docs/demo/synthetic-demo.mp4)
-
-## Screenshots
-
-All screenshots and the demo video are taken against the bundled synthetic
-dataset.
-
-![Overview](docs/screenshots/overview.png)
-![Throughput](docs/screenshots/throughput.png)
-![Cost](docs/screenshots/cost.png)
-![Consumption](docs/screenshots/consumption.png)
-![Adoption](docs/screenshots/adoption.png)
-![Quality](docs/screenshots/quality.png)
-![Code scans](docs/screenshots/code_scans.png)
-![Teams](docs/screenshots/teams.png)
-![Activity](docs/screenshots/activity.png)
-
 ## Privacy
 
 The repository contains **no real account data** — only the synthetic
-generator. SQLite files under `data/` are git-ignored; never commit real
+generator. Every screenshot and the demo video above were captured in demo
+mode. SQLite files under `data/` are git-ignored; never commit real
 session data, org/user identifiers, API responses, or screenshots of real
 accounts.

@@ -199,9 +199,8 @@ def setup_expander(hidden: list[KpiValue]) -> None:
         return
     with st.expander(f"{len(hidden)} more KPIs available with optional setup"):
         for kv in hidden:
-            st.markdown(
-                f"- **{kv.label}** — " + "; ".join(DEPENDS_LABELS.get(d, d) for d in kv.depends_on)
-            )
+            reason = kv.note or "; ".join(DEPENDS_LABELS.get(d, d) for d in kv.depends_on)
+            st.markdown(f"- **{kv.label}** — {reason}")
 
 
 def chart(df: pd.DataFrame, fig, name: str, col=None) -> None:

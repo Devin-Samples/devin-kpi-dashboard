@@ -451,7 +451,7 @@ def compute_all(
             )
         )
     else:
-        note = "requires git enrichment"
+        note = "requires git enrichment (GITHUB_TOKEN / GITLAB_TOKEN / AZURE_DEVOPS_PAT)"
         out.append(_unavailable("review_comments_per_merged_pr", "comments", note))
         out.append(_unavailable("review_rounds_per_merged_pr", "rounds", note))
 

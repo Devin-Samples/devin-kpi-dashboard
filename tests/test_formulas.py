@@ -257,11 +257,22 @@ def test_total_cost_unavailable_without_price():
 def test_adoption():
     r = results()
     assert r["dau"].value == 1  # only s4 within last day of window
-    assert r["wau"].value == 4
-    assert r["mau"].value == 4
-    assert r["stickiness"].value == pytest.approx(0.25)
-    assert r["active_vs_licensed"].value == pytest.approx(4 / 10)
+    # WAU/MAU are trailing windows from the period end, so they reach back
+    # past the ~4-day period start and pick up s5 (u9) too.
+    assert r["wau"].value == 5
+    assert r["mau"].value == 5
+    assert r["stickiness"].value == pytest.approx(0.2)
+    assert r["active_vs_licensed"].value == pytest.approx(4 / 10)  # users in period
     assert r["playbook_automation_share"].value == pytest.approx(0.25)
+
+
+def test_active_user_windows_are_not_clipped_by_short_periods():
+    long = results(f=FilterSet(start=ep(0), end=ep(410000)))
+    short = results(f=FilterSet(start=ep(399000), end=ep(410000)))  # ~3 h
+    assert short["sessions_completed"].value == 1  # only s4 in period
+    for k in ("dau", "wau", "mau"):
+        assert short[k].value == long[k].value
+    assert short["mau"].value == 5
 
 
 def test_service_session_detection():
@@ -280,8 +291,8 @@ def test_adoption_excludes_service_sessions():
     assert r["total_acus"].value == pytest.approx(22.0)
     # ... but adoption only counts humans (s6/s7 are on the last day)
     assert r["dau"].value == 1
-    assert r["wau"].value == 4
-    assert r["mau"].value == 4
+    assert r["wau"].value == 5
+    assert r["mau"].value == 5
     assert r["active_vs_licensed"].value == pytest.approx(4 / 10)
     assert "excludes 2 service" in r["mau"].note
 

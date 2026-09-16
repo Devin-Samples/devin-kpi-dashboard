@@ -24,7 +24,7 @@ def test_summary_covers_delivery_cost_adoption_and_risk():
     assert "67% of the PRs it opened were merged" in text
     assert "Total spend was **$44.00**" in text
     assert "$22.00 per merged PR" in text  # 22 ACUs * $2 / 2 merged PRs
-    assert "**4 engineers** used Devin in the last 30 days" in text
+    assert "**5 engineers** used Devin in the last 30 days" in text
     assert "vs prior period" in text  # previous period has s5, so a trend renders
     assert "17% of sessions were stopped by usage limits" in text
     assert "17% ended in error" in text

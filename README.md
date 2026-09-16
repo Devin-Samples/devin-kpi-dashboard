@@ -177,8 +177,8 @@ Regenerate this section with `python scripts/gen_definitions_md.py`.
 | KPI | Formula | Source | Depends on |
 | --- | --- | --- | --- |
 | DAU (`dau`) | distinct human users with >=1 session on the period's last day (excludes service users and code_scan/automation origins) | sessions list | — |
-| WAU (`wau`) | distinct human users with >=1 session in the last 7 days of the period | sessions list | — |
-| MAU (`mau`) | distinct human users with >=1 session in the last 30 days of the period | sessions list | — |
+| WAU (`wau`) | distinct human users with >=1 session in the 7 days ending at the period end (trailing window; not clipped by the period start) | sessions list | — |
+| MAU (`mau`) | distinct human users with >=1 session in the 30 days ending at the period end (trailing window; not clipped by the period start) | sessions list | — |
 | Stickiness (DAU/MAU) (`stickiness`) | DAU / MAU | sessions list | — |
 | Active users vs licensed (`active_vs_licensed`) | distinct human users active in period / SEAT_COUNT | sessions + config SEAT_COUNT | SEAT_COUNT |
 | Playbook & automation share (`playbook_automation_share`) | sessions with playbook_id or automation_id / all sessions | sessions list | — |

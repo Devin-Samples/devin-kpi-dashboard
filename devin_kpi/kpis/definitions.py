@@ -173,14 +173,16 @@ DEFINITIONS: dict[str, dict] = {
     "wau": {
         "group": "Adoption",
         "label": "WAU",
-        "formula": "distinct human users with >=1 session in the last 7 days of the period",
+        "formula": "distinct human users with >=1 session in the 7 days ending at the "
+        "period end (trailing window; not clipped by the period start)",
         "source": "sessions list",
         "depends_on": [],
     },
     "mau": {
         "group": "Adoption",
         "label": "MAU",
-        "formula": "distinct human users with >=1 session in the last 30 days of the period",
+        "formula": "distinct human users with >=1 session in the 30 days ending at the "
+        "period end (trailing window; not clipped by the period start)",
         "source": "sessions list",
         "depends_on": [],
     },

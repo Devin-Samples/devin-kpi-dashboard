@@ -5,7 +5,8 @@ note, so the UI can degrade gracefully."""
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import timedelta
 
 import pandas as pd
 
@@ -322,17 +323,23 @@ def compute_all(
         out.append(_unavailable("cost_per_story_point", "usd", note))
 
     # ---- Adoption (active-user KPIs count humans only)
-    h = human_sessions(s) if n_sessions else s
-    n_service = n_sessions - len(h)
-    if n_sessions:
+    # DAU/WAU/MAU are trailing windows anchored at the period end, so they are
+    # not clipped when the selected period is shorter than 30 days.
+    trailing, _ = apply_filters(sessions, prs, replace(f, start=f.end - timedelta(days=30)))
+    ht = human_sessions(trailing) if len(trailing) else trailing
+    n_service = len(trailing) - len(ht)
+    if len(ht):
         end_ts = int(f.end.timestamp())
-        dau = h[h.created_at >= end_ts - DAY].user_id.nunique()
-        wau = h[h.created_at >= end_ts - 7 * DAY].user_id.nunique()
-        mau = h[h.created_at >= end_ts - 30 * DAY].user_id.nunique()
-        active = h.user_id.nunique()
+        dau = ht[ht.created_at >= end_ts - DAY].user_id.nunique()
+        wau = ht[ht.created_at >= end_ts - 7 * DAY].user_id.nunique()
+        mau = ht.user_id.nunique()
+    else:
+        dau = wau = mau = 0
+    if n_sessions:
+        active = human_sessions(s).user_id.nunique()
         pb = int((s.playbook_id.notna() | s.automation_id.notna()).sum())
     else:
-        dau = wau = mau = active = pb = 0
+        active = pb = 0
     svc_note = f"excludes {n_service:,} service/automation sessions" if n_service else None
     out.append(_kv("dau", float(dau), "users", note=svc_note))
     out.append(_kv("wau", float(wau), "users", note=svc_note))

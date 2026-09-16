@@ -1,14 +1,18 @@
 """Synthetic generator invariants."""
 
+from datetime import UTC, datetime
+
 import pandas as pd
 
 from devin_kpi.store import Store
 from devin_kpi.synth.generate import generate
 
+NOW = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
+
 
 def test_generate(tmp_path):
     store = Store(tmp_path / "demo.sqlite")
-    stats = generate(store, seed=42, n_sessions=800, n_days=60)
+    stats = generate(store, seed=42, n_sessions=800, n_days=60, now=NOW)
 
     assert store.count("sessions") == stats["sessions"] == 800
     assert store.count("session_insights") == 800
@@ -26,7 +30,7 @@ def test_generate(tmp_path):
 
     # determinism
     store2 = Store(tmp_path / "demo2.sqlite")
-    generate(store2, seed=42, n_sessions=800, n_days=60)
+    generate(store2, seed=42, n_sessions=800, n_days=60, now=NOW)
     pd.testing.assert_frame_equal(
         store.read_df("sessions").sort_values("session_id").reset_index(drop=True),
         store2.read_df("sessions").sort_values("session_id").reset_index(drop=True),
